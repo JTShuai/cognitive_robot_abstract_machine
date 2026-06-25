@@ -1,33 +1,16 @@
-# ============================================================================
-# CRAM 安装镜像（基于 osrf/ros:jazzy-desktop-full）
-#
-# 构建（在仓库根目录执行）：
-#   docker build -f Dockerfile.cram -t cram:jazzy .
-#
-# 运行（进入已激活环境的交互式 shell）：
-#   docker run -it --rm cram:jazzy
-#
-# 复用了项目自带的 ROS workspace 安装脚本（.github/docker/），
-# 与官方 CI 的安装路径保持一致。
-# ============================================================================
 ARG FROM_IMAGE=osrf/ros:jazzy-desktop-full
 FROM ${FROM_IMAGE}
 
 SHELL ["/bin/bash", "-c"]
 
-# overlay workspace 路径（存放编译好的机器人描述等 ROS 包）
 ARG OVERLAY_WS=/opt/ros/overlay_ws
 ENV OVERLAY_WS=${OVERLAY_WS}
 ENV CRAM_VENV=/opt/ros/cram-env
-# 让 uv 把 cram-env 当作项目环境（而非新建 .venv），
-# 从而复用带 --system-site-packages 的 cram-env，能看到系统里的 argcomplete 等 ROS Python 包。
+
 ENV UV_PROJECT_ENVIRONMENT=${CRAM_VENV}
 ENV DEBIAN_FRONTEND=noninteractive
 
-# ----------------------------------------------------------------------------
-# 1. 构建 ROS overlay workspace
-#    复用项目脚本：安装系统依赖 + 克隆机器人描述包 + colcon 构建
-# ----------------------------------------------------------------------------
+
 WORKDIR /opt/ros
 COPY .github/docker/setup_ros_workspace.sh /tmp/setup_ros_workspace.sh
 COPY .github/docker/setup_workspace.py     /tmp/setup_workspace.py
@@ -35,19 +18,13 @@ RUN OVERLAY_WS=${OVERLAY_WS} bash /tmp/setup_ros_workspace.sh \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# ----------------------------------------------------------------------------
-# 2. 创建 Python 虚拟环境
-#    --system-site-packages 让 venv 能看到系统里的 rclpy 等 ROS Python 包
-#    并安装 uv（项目指定的包管理器）
-# ----------------------------------------------------------------------------
+
 RUN source /opt/ros/jazzy/setup.bash \
     && python3 -m venv "${CRAM_VENV}" --system-site-packages \
     && source "${CRAM_VENV}/bin/activate" \
     && pip install --no-cache-dir uv
 
-# ----------------------------------------------------------------------------
-# 3. 安装 CRAM 本体（整个 uv 工作区，含开发依赖）
-# ----------------------------------------------------------------------------
+
 WORKDIR /root/cognitive_robot_abstract_machine
 COPY . .
 RUN source /opt/ros/jazzy/setup.bash \
@@ -55,11 +32,7 @@ RUN source /opt/ros/jazzy/setup.bash \
     && source "${CRAM_VENV}/bin/activate" \
     && uv sync --extra dev --active
 
-# ----------------------------------------------------------------------------
-# 4. GUI 依赖（完整功能：RDR 规则编辑器、giskardpy 状态机查看器等）
-#    - Python 端：PyQt6 + qtconsole
-#    - 系统端：xcb/egl 库 + xvfb（无头环境跑 GUI 时用，与 CI 一致）
-# ----------------------------------------------------------------------------
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         xvfb libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
@@ -69,10 +42,7 @@ RUN apt-get update \
 RUN source "${CRAM_VENV}/bin/activate" \
     && uv pip install PyQt6 qtconsole
 
-# ----------------------------------------------------------------------------
-# 5. 入口：自动 source overlay workspace + 激活 cram-env
-#    （复用项目自带的 entrypoint.sh）
-# ----------------------------------------------------------------------------
+
 COPY .github/docker/entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["bash", "/entrypoint.sh"]
 CMD ["bash"]
