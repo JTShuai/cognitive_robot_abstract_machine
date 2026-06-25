@@ -1,0 +1,283 @@
+Panels:
+  - Class: rviz_common/Displays
+    Help Height: 78
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Global Options1
+        - /MarkerArray1/Topic1
+        - /TF1
+      Splitter Ratio: 0.5
+    Tree Height: 263
+  - Class: rviz_common/Selection
+    Name: Selection
+  - Class: rviz_common/Tool Properties
+    Expanded: ~
+    Name: Tool Properties
+    Splitter Ratio: 0.5886790156364441
+  - Class: rviz_common/Views
+    Expanded:
+      - /Current View1
+    Name: Views
+    Splitter Ratio: 0.5
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.5
+      Cell Size: 1
+      Class: rviz_default_plugins/Grid
+      Color: 160; 160; 164
+      Enabled: false
+      Line Style:
+        Line Width: 0.029999999329447746
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Plane: XY
+      Plane Cell Count: 20
+      Reference Frame: <Fixed Frame>
+      Value: false
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: MarkerArray
+      Namespaces:
+        apartment/armchair: true
+        apartment/bedside_table: true
+        apartment/cabinet1: true
+        apartment/cabinet10: true
+        apartment/cabinet10_drawer_bottom: true
+        apartment/cabinet10_drawer_middle: true
+        apartment/cabinet10_drawer_top: true
+        apartment/cabinet11: true
+        apartment/cabinet11_drawer_bottom: true
+        apartment/cabinet11_drawer_middle: true
+        apartment/cabinet11_drawer_top: true
+        apartment/cabinet1_coloksu_level4: true
+        apartment/cabinet1_coloksu_level5: true
+        apartment/cabinet1_door_top_left: true
+        apartment/cabinet1_drawer_bottom: true
+        apartment/cabinet1_drawer_middle: true
+        apartment/cabinet2: true
+        apartment/cabinet2_door_left: true
+        apartment/cabinet2_drawer_big: true
+        apartment/cabinet2_drawer_small: true
+        apartment/cabinet3: true
+        apartment/cabinet3_door_bottom_left: true
+        apartment/cabinet3_door_top_left: true
+        apartment/cabinet4: true
+        apartment/cabinet4_door_bottom: true
+        apartment/cabinet4_door_top: true
+        apartment/cabinet5: true
+        apartment/cabinet5_drawer_bottom: true
+        apartment/cabinet5_drawer_middle: true
+        apartment/cabinet5_drawer_top: true
+        apartment/cabinet6: true
+        apartment/cabinet6_drawer_bottom: true
+        apartment/cabinet6_drawer_middle: true
+        apartment/cabinet6_drawer_top: true
+        apartment/cabinet7: true
+        apartment/cabinet7_door_bottom_left: true
+        apartment/cabinet8: true
+        apartment/cabinet8_drawer_bottom: true
+        apartment/cabinet8_drawer_middle: true
+        apartment/cabinet9: true
+        apartment/cabinet9_drawer_bottom: true
+        apartment/cabinet9_drawer_middle: true
+        apartment/cabinet9_drawer_top: true
+        apartment/coffe_machine: true
+        apartment/coffee_table: true
+        apartment/coffee_table_drawer: true
+        apartment/cooktop: true
+        apartment/countertop: true
+        apartment/dishwasher_drawer_middle: true
+        apartment/handle_cab10_b: true
+        apartment/handle_cab10_m: true
+        apartment/handle_cab10_t: true
+        apartment/handle_cab11_b: true
+        apartment/handle_cab11_m: true
+        apartment/handle_cab11_t: true
+        apartment/handle_cab1_drawer_bottom: true
+        apartment/handle_cab1_drawer_mid: true
+        apartment/handle_cab1_top_door: true
+        apartment/handle_cab2_door: true
+        apartment/handle_cab3_door_bottom: true
+        apartment/handle_cab3_door_top: true
+        apartment/handle_cab4_door_bottom: true
+        apartment/handle_cab5_b: true
+        apartment/handle_cab5_m: true
+        apartment/handle_cab5_t: true
+        apartment/handle_cab6_b: true
+        apartment/handle_cab6_m: true
+        apartment/handle_cab6_t: true
+        apartment/handle_cab7: true
+        apartment/handle_cab7_middle: true
+        apartment/handle_cab8: true
+        apartment/handle_cab9_b: true
+        apartment/handle_cab9_m: true
+        apartment/handle_cab9_t: true
+        apartment/island_back: true
+        apartment/island_countertop: true
+        apartment/island_waterfall_left: true
+        apartment/island_waterfall_right: true
+        apartment/oven: true
+        apartment/side_A_left: true
+        apartment/side_A_rb: true
+        apartment/side_A_rt: true
+        apartment/sink: true
+        apartment/sofa: true
+        apartment/table_area_main: true
+        apartment/tap_body: true
+        apartment/tap_handle: true
+        apartment/useless_underbar_a: true
+        apartment/useless_underbar_b: true
+        apartment/wall_coloksu_wall1: true
+        apartment/wall_coloksu_wall2: true
+        apartment/wall_coloksu_wall3: true
+        apartment/wall_coloksu_wall4: true
+        apartment/walls: true
+        apartment/wardrobe: true
+        apartment/wardrobe_door_left: true
+        apartment/wardrobe_door_left_handle: true
+        apartment/wardrobe_door_right: true
+        apartment/wardrobe_door_right_handle: true
+        apartment/windows: true
+        bowl.stl: true
+        breakfast_cereal.stl: true
+        milk.stl: true
+        pr2/base_bellow_link: true
+        pr2/base_link: true
+        pr2/bl_caster_l_wheel_link: true
+        pr2/bl_caster_r_wheel_link: true
+        pr2/bl_caster_rotation_link: true
+        pr2/br_caster_l_wheel_link: true
+        pr2/br_caster_r_wheel_link: true
+        pr2/br_caster_rotation_link: true
+        pr2/double_stereo_link: true
+        pr2/fl_caster_l_wheel_link: true
+        pr2/fl_caster_r_wheel_link: true
+        pr2/fl_caster_rotation_link: true
+        pr2/fr_caster_l_wheel_link: true
+        pr2/fr_caster_r_wheel_link: true
+        pr2/fr_caster_rotation_link: true
+        pr2/head_mount_kinect2_link: true
+        pr2/head_mount_link: true
+        pr2/head_pan_link: true
+        pr2/head_tilt_link: true
+        pr2/l_elbow_flex_link: true
+        pr2/l_force_torque_link: true
+        pr2/l_forearm_link: true
+        pr2/l_forearm_roll_link: true
+        pr2/l_gripper_l_finger_link: true
+        pr2/l_gripper_l_finger_tip_link: true
+        pr2/l_gripper_palm_link: true
+        pr2/l_gripper_r_finger_link: true
+        pr2/l_gripper_r_finger_tip_link: true
+        pr2/l_shoulder_lift_link: true
+        pr2/l_shoulder_pan_link: true
+        pr2/l_torso_lift_side_item_profile_link: true
+        pr2/l_upper_arm_link: true
+        pr2/l_upper_arm_roll_link: true
+        pr2/l_wrist_flex_link: true
+        pr2/l_wrist_roll_link: true
+        pr2/laser_tilt_mount_link: true
+        pr2/m_torso_lift_side_item_profile_link: true
+        pr2/r_elbow_flex_link: true
+        pr2/r_forearm_link: true
+        pr2/r_forearm_roll_link: true
+        pr2/r_gripper_l_finger_link: true
+        pr2/r_gripper_l_finger_tip_link: true
+        pr2/r_gripper_palm_link: true
+        pr2/r_gripper_r_finger_link: true
+        pr2/r_gripper_r_finger_tip_link: true
+        pr2/r_shoulder_lift_link: true
+        pr2/r_shoulder_pan_link: true
+        pr2/r_torso_lift_side_item_profile_link: true
+        pr2/r_upper_arm_link: true
+        pr2/r_upper_arm_roll_link: true
+        pr2/r_wrist_flex_link: true
+        pr2/r_wrist_roll_link: true
+        pr2/t_torso_lift_side_item_profile_link: true
+        pr2/torso_lift_link: true
+        spoon.stl: true
+      Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /semworld/viz_marker
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Enabled: false
+      Filter (blacklist): ""
+      Filter (whitelist): ""
+      Frame Timeout: 15
+      Frames:
+        All Enabled: true
+      Marker Scale: 0.5
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: false
+      Tree:
+        {}
+      Update Interval: 0
+      Value: false
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: apartment/apartment_root
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 5.741334438323975
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.05999999865889549
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
+      Focal Point:
+        X: 5.837733268737793
+        Y: 2.7502200603485107
+        Z: 1.5077028274536133
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05000000074505806
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.009999999776482582
+      Pitch: 0.36000001430511475
+      Target Frame: <Fixed Frame>
+      Value: Orbit (rviz_default_plugins)
+      Yaw: 0.3218156099319458
+    Saved: ~
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 1194
+  Hide Left Dock: false
+  Hide Right Dock: false
+  QMainWindow State: 000000ff00000000fd00000001000000000000019b00000454fc0200000004fb000000100044006900730070006c006100790073010000003b00000190000000c700fffffffb0000001200530065006c0065006300740069006f006e01000001d1000000b70000005c00fffffffb0000001e0054006f006f006c002000500072006f0070006500720074006900650073010000028e000000b90000005c00fffffffb0000000a00560069006500770073010000034d00000142000000a000ffffff0000059a0000045400000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  Selection:
+    collapsed: false
+  Tool Properties:
+    collapsed: false
+  Views:
+    collapsed: false
+  Width: 1851
+  X: 3135
+  Y: 48

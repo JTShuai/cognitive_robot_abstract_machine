@@ -1,0 +1,16 @@
+# 版本库与本地缓存（构建时不需要，避免拖慢/污染镜像）
+.git
+.github/workflows
+**/__pycache__
+**/*.pyc
+.venv
+**/.venv
+.pytest_cache
+**/*.egg-info
+**/build
+**/dist
+tmp
+.idea
+.vscode
+# uv 在镜像内重新解析；本地锁缓存不带入
+.uv-cache
