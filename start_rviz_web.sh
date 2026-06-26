@@ -67,6 +67,29 @@ if [[ -z "${RVIZ_VNC_SCRIPT}" ]]; then
     exit 1
 fi
 
+# RViz restores its saved main-window geometry from the .rviz config. demo.rviz
+# stores X: 3135, which is off-screen on a 1920-wide virtual display, so the
+# window lands outside the framebuffer and VNC/noVNC shows only the empty root.
+# Rewrite just the Window Geometry block into an on-screen copy under /tmp (the
+# original config is left untouched) and launch RViz with that copy.
+SCREEN="${SCREEN:-1920x1080x24}"
+screen_width="${SCREEN%%x*}"
+screen_rest="${SCREEN#*x}"
+screen_height="${screen_rest%%x*}"
+usable_height="$(( screen_height - 40 ))"  # leave room for the WM title bar
+source_config="${1:-/root/cognitive_robot_abstract_machine/coraplex/demos/coraplex_bullet_world_demo/demo.rviz}"
+if [[ -f "${source_config}" ]]; then
+    onscreen_config="/tmp/rviz_onscreen.rviz"
+    sed -E "/^Window Geometry:/,/^[^[:space:]]/ {
+        s/^(  X:) .*/\1 0/
+        s/^(  Y:) .*/\1 0/
+        s/^(  Width:) .*/\1 ${screen_width}/
+        s/^(  Height:) .*/\1 ${usable_height}/
+    }" "${source_config}" > "${onscreen_config}"
+    set -- "${onscreen_config}"
+    echo ">>> on-screen RViz config: ${onscreen_config} (from ${source_config})"
+fi
+
 # Hand off to the unchanged VNC script: it sets up Xvfb/openbox/x11vnc and runs
 # RViz in the foreground (exec). The backgrounded websockify survives the exec,
 # exactly as Xvfb/openbox already do in that script.
