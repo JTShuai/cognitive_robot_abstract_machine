@@ -11,10 +11,18 @@ ENV UV_PROJECT_ENVIRONMENT=${CRAM_VENV}
 ENV DEBIAN_FRONTEND=noninteractive
 
 
+ARG INDEX_URL=https://pypi.org/simple
+ENV PIP_INDEX_URL=${INDEX_URL}
+ENV UV_DEFAULT_INDEX=${INDEX_URL}
+
+
 WORKDIR /opt/ros
 COPY .github/docker/setup_ros_workspace.sh /tmp/setup_ros_workspace.sh
 COPY .github/docker/setup_workspace.py     /tmp/setup_workspace.py
-RUN OVERLAY_WS=${OVERLAY_WS} bash /tmp/setup_ros_workspace.sh \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ros-jazzy-ur-client-library \
+    && sed -i 's#colcon build --merge-install#colcon build --merge-install --packages-ignore iai_daisy_description#' /tmp/setup_workspace.py \
+    && OVERLAY_WS=${OVERLAY_WS} bash /tmp/setup_ros_workspace.sh \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
