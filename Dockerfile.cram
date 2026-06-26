@@ -43,12 +43,17 @@ RUN source /opt/ros/jazzy/setup.bash \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        xvfb libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+        xvfb x11vnc openbox \
+        libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
         libxcb-render-util0 libxcb-xinerama0 libxcb-xkb1 libxkbcommon-x11-0 libegl1 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 RUN source "${CRAM_VENV}/bin/activate" \
     && uv pip install PyQt6 qtconsole
+
+# 一条命令在无头虚拟显示(:99)上跑 RViz 并经 VNC 暴露（headless RViz over VNC）
+COPY start_rviz_vnc.sh /usr/local/bin/start_rviz_vnc.sh
+RUN chmod +x /usr/local/bin/start_rviz_vnc.sh
 
 
 COPY .github/docker/entrypoint.sh /entrypoint.sh
