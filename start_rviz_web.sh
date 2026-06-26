@@ -46,7 +46,29 @@ fi
 
 echo ">>> Browser view: http://localhost:${WEB_PORT}/vnc.html?autoconnect=1&resize=remote"
 
+# Locate start_rviz_vnc.sh robustly: it may be on PATH (baked image), next to
+# this script, or only in the mounted source tree (older base images that
+# predate the COPY of start_rviz_vnc.sh). Override with RVIZ_VNC_SCRIPT if needed.
+RVIZ_VNC_SCRIPT="${RVIZ_VNC_SCRIPT:-}"
+if [[ -z "${RVIZ_VNC_SCRIPT}" ]]; then
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    for candidate in \
+        "$(command -v start_rviz_vnc.sh 2>/dev/null || true)" \
+        "${script_dir}/start_rviz_vnc.sh" \
+        "/root/cognitive_robot_abstract_machine/start_rviz_vnc.sh"; do
+        if [[ -n "${candidate}" && -f "${candidate}" ]]; then
+            RVIZ_VNC_SCRIPT="${candidate}"
+            break
+        fi
+    done
+fi
+if [[ -z "${RVIZ_VNC_SCRIPT}" ]]; then
+    echo "ERROR: cannot find start_rviz_vnc.sh -- set RVIZ_VNC_SCRIPT=/path/to/start_rviz_vnc.sh" >&2
+    exit 1
+fi
+
 # Hand off to the unchanged VNC script: it sets up Xvfb/openbox/x11vnc and runs
 # RViz in the foreground (exec). The backgrounded websockify survives the exec,
 # exactly as Xvfb/openbox already do in that script.
-exec start_rviz_vnc.sh "$@"
+echo ">>> handing off to ${RVIZ_VNC_SCRIPT}"
+exec bash "${RVIZ_VNC_SCRIPT}" "$@"

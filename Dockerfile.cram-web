@@ -20,7 +20,10 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy both scripts so the image is self-contained even if the base cram:jazzy
+# predates the COPY of start_rviz_vnc.sh (older images lack it on PATH).
+COPY start_rviz_vnc.sh /usr/local/bin/start_rviz_vnc.sh
 COPY start_rviz_web.sh /usr/local/bin/start_rviz_web.sh
-RUN chmod +x /usr/local/bin/start_rviz_web.sh
+RUN chmod +x /usr/local/bin/start_rviz_vnc.sh /usr/local/bin/start_rviz_web.sh
 
 EXPOSE 6080
