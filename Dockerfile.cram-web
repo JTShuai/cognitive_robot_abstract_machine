@@ -1,0 +1,26 @@
+# Adds a browser/web view (noVNC) on top of the existing cram:jazzy image.
+#
+# This layer is purely additive: it does NOT modify Dockerfile.cram or the
+# original VNC flow. It only installs noVNC + websockify and copies the
+# start_rviz_web.sh wrapper, so the browser view is available without paying a
+# per-container apt install.
+#
+# Build (after cram:jazzy already exists):
+#   docker build --network=host -f Dockerfile.cram-web -t cram:jazzy-web .
+#
+# Run (publish the web port; keep 5900 too if you still want a native VNC client):
+#   docker run -it --rm -p 5900:5900 -p 6080:6080 \
+#     -v "$PWD":/root/cognitive_robot_abstract_machine \
+#     cram:jazzy-web bash -c "uv sync --inexact --extra dev --active && bash"
+#   # inside: start_rviz_web.sh
+FROM cram:jazzy
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends novnc websockify \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY start_rviz_web.sh /usr/local/bin/start_rviz_web.sh
+RUN chmod +x /usr/local/bin/start_rviz_web.sh
+
+EXPOSE 6080
