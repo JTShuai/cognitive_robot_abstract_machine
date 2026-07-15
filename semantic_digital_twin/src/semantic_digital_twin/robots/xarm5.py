@@ -6,12 +6,14 @@ camera. Mirrors the structure of the other robots in this package (see ``pr2.py`
 ``stretch.py``): each part is a leaf-first class implementing the three abstract
 methods, and the robot class ties them together.
 
-.. note:: ``get_ros_file_path`` returns a ``package://xarm_description/...`` path. For
-   it to resolve, ``xarm_description`` must be a discoverable ROS package (installed in
-   the overlay workspace, exactly like ``iai_pr2_description`` is for the PR2). The
-   self-collision matrix, by contrast, ships with this package under
-   ``resources/collision_configs/xarm5.srdf`` and is always available.
+.. note:: The robot description ships with this package under
+   ``resources/xarm_description`` (URDF and meshes), and the self-collision matrix
+   under ``resources/collision_configs/xarm5.srdf``. ``get_ros_file_path`` registers
+   the shipped description on ``ROS_PACKAGE_PATH`` so its ``package://`` references
+   resolve without a ROS installation; an ``xarm_description`` package already
+   present in the environment takes precedence.
 """
+
 from __future__ import annotations
 
 import os
@@ -36,7 +38,9 @@ from semantic_digital_twin.robots.robot_parts import (
     EndEffector,
 )
 from semantic_digital_twin.spatial_types import Quaternion, Vector3
-from semantic_digital_twin.world_description.world_entity import KinematicStructureEntity
+from semantic_digital_twin.world_description.world_entity import (
+    KinematicStructureEntity,
+)
 
 
 @dataclass(eq=False)
@@ -137,6 +141,23 @@ class XArm5(AbstractRobot, HasOneArm[XArm5Arm], HasSensors[XArm5Camera]):
 
     @classmethod
     def get_ros_file_path(cls) -> str:
+        """
+        Return the URDF location of the shipped ``xarm_description`` package,
+        registering it on ``ROS_PACKAGE_PATH`` so the URDF and its mesh
+        references resolve without a ROS installation.
+        """
+        shipped_description = os.path.join(
+            Path(files("semantic_digital_twin")).parent.parent,
+            "resources",
+            "xarm_description",
+        )
+        search_path = os.environ.get("ROS_PACKAGE_PATH", "")
+        if shipped_description not in search_path.split(":"):
+            os.environ["ROS_PACKAGE_PATH"] = (
+                f"{search_path}:{shipped_description}"
+                if search_path
+                else shipped_description
+            )
         return "package://xarm_description/urdf/xarm5.urdf"
 
     @classmethod
