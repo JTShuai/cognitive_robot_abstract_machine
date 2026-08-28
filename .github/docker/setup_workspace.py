@@ -27,6 +27,11 @@ class Repository:
     branch: str
     name: str
     cleanup_dirs: List[str] = field(default_factory=list)
+    commit: Optional[str] = None
+    """
+    Exact commit to check out for a reproducible build. When set, the working tree is
+    pinned to this commit instead of tracking the moving branch head.
+    """
 
 
 class SystemDependencyManager:
@@ -64,13 +69,18 @@ class GitManager:
 
     def setup_repository(self, repo: Repository):
         """
-        Clones a repository if it doesn't exist, or pulls updates if it does.
+        Clones a repository if it doesn't exist (otherwise fetches), then checks out
+        the pinned commit when one is given so the build is reproducible.
         """
         repo_path = os.path.join(self.workspace_src_path, repo.name)
 
         if os.path.exists(repo_path):
             print(f"{bcolors.OKGREEN}Updating {repo.name}...{bcolors.ENDC}")
-            subprocess.run(["git", "-C", repo_path, "pull"], check=True)
+            subprocess.run(
+                ["git", "-C", repo_path, "fetch", "origin", repo.branch], check=True
+            )
+            if repo.commit is None:
+                subprocess.run(["git", "-C", repo_path, "pull"], check=True)
         else:
             print(f"{bcolors.OKGREEN}Cloning {repo.name}...{bcolors.ENDC}")
             subprocess.run(
@@ -84,6 +94,14 @@ class GitManager:
                     repo_path,
                 ],
                 check=True,
+            )
+
+        if repo.commit is not None:
+            print(
+                f"{bcolors.OKGREEN}Pinning {repo.name} to {repo.commit}...{bcolors.ENDC}"
+            )
+            subprocess.run(
+                ["git", "-C", repo_path, "checkout", "--force", repo.commit], check=True
             )
 
         for sub_dir in repo.cleanup_dirs:
@@ -289,6 +307,9 @@ def main():
                 "xarm_planner",
                 "xarm_sdk",
             ],
+            # jazzy @ 2026-08-11 "[fix] fix xarm_gazebo depend"; parent 57be2f40 fixes
+            # the xarm5_1305 link5 model. Bump this SHA to intentionally pull updates.
+            commit="3dc2b5e8294758d96b54b15fa5920d581b7cbb3d",
         ),
     ]
 
