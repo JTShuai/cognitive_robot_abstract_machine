@@ -6,16 +6,32 @@ from __future__ import annotations
 
 import inspect
 import operator
+from dataclasses import dataclass
 from inspect import isclass
 from uuid import UUID
 
-from typing_extensions import Iterable, List, TypeVar, overload
+from typing_extensions import (
+    Any,
+    Iterable,
+    List,
+    Optional,
+    Tuple,
+    Type,
+    TypeVar,
+    overload,
+)
 
 from krrood.entity_query_language.core.base_expressions import (
+    Selectable,
     SymbolicExpression,
     TruthValueOperator,
     OperationResult,
 )
+from krrood.entity_query_language.operators.causal import (
+    cause,
+    confounder,
+)
+from krrood.entity_query_language.core.helpers import _resolve_domain
 from krrood.entity_query_language.core.mapped_variable import (
     FlatVariable,
     CanBehaveLikeAVariable,
@@ -26,7 +42,6 @@ from krrood.entity_query_language.core.variable import (
     Literal,
     ExternallySetVariable,
 )
-from krrood.entity_query_language.cache_data import InstanceFilteredDomain
 from krrood.entity_query_language.enums import DomainSource
 from krrood.entity_query_language.exceptions import UnsupportedExpressionTypeForDistinct
 from krrood.entity_query_language.operators.aggregators import (
@@ -50,7 +65,13 @@ from krrood.entity_query_language.operators.core_logical_operators import (
 )
 from krrood.entity_query_language.operators.logical_quantifiers import ForAll, Exists
 from krrood.entity_query_language.predicate import *  # type: ignore
-from krrood.entity_query_language.predicate import symbolic_function
+from krrood.entity_query_language.predicate import (
+    Predicate,
+    RenderedFields,
+    SymbolicFunction,
+    symbolic_callable_to_function,
+    symbolic_function,
+)
 from krrood.entity_query_language.query.match import (
     Match,
 )
@@ -121,20 +142,10 @@ def variable(
       but by another evaluator (e.g., EQL To SQL converter in Ormatic).
     :return: A Variable that can be queried for.
     """
-    # Determine the domain source
-    if is_iterable(domain):
-        domain = InstanceFilteredDomain(type_, domain)
-    elif domain is None and issubclass(type_, Symbol):
-        domain = SymbolGraph().get_instances_of_type(type_)
-    else:
-        domain = domain
-
-    result = Variable(
+    return Variable(
         _type_=type_,
-        _domain_=domain,
+        _domain_=_resolve_domain(type_, domain),
     )
-
-    return result
 
 
 def deduced_variable(
@@ -160,6 +171,12 @@ def variable_from(
     """
     return Variable(_domain_=domain)
 
+
+# %% Causal Constructs
+
+# `cause` and `confounder` (see operators/causal.py) are re-exported here so query-
+# building imports can come from this one module, alongside `a`, `an`, `set_of`, and
+# the rest of this file's factories.
 
 # %% Operators on Variables
 
@@ -208,7 +225,13 @@ def flat_variable(
 
     This returns a DomainMapping that, when evaluated, yields one solution per inner
     element (similar to SQL UNNEST), keeping existing variable bindings intact.
+
+    Each call yields a variable of its own, so two flattenings of the same collection
+    range over its elements independently and a condition can relate one element to
+    another.
     """
+    # Constructed directly rather than through `_get_mapped_variable_`, whose cache
+    # would give every flattening of one collection the same identity.
     return FlatVariable(var)
 
 
@@ -328,11 +351,11 @@ def _quantify_or_build_match(
 
 TSymbolicExpression = TypeVar("TSymbolicExpression", bound=SymbolicExpression)
 """
-Bound to the concrete symbolic-expression subtype (``Entity[...]``,
-``Query[...]``, ``SetOf``, an ``Attribute`` chain, ...) passed to
-:py:func:`an`/:py:func:`the`/:py:func:`a`, so their quantify-path overload
-returns that same type instead of falling through to the ``Callable[..., T]``
-match-building overload.
+Bound to the concrete symbolic-expression subtype (``Entity[...]``, ``Query[...]``,
+``SetOf``, an ``Attribute`` chain, ...) passed to
+:py:func:`an`/:py:func:`the`/:py:func:`a`, so their quantify-path overload returns that
+same type instead of falling through to the ``Callable[..., T]`` match-building
+overload.
 
 .. note::
     Not every symbolic expression is affected, but the ones that inherit ``__call__`` from
@@ -775,8 +798,6 @@ def distinct(
     match expression:
         case Query():
             return expression.distinct(*on)
-        case ResultQuantifier():
-            return expression._child_.distinct(*on)
         case Selectable():
             return entity(expression).distinct(*on)
         case _:
@@ -839,46 +860,271 @@ def evaluate_condition(condition: ConditionType) -> bool:
     return any(condition.evaluate())
 
 
-@symbolic_function
-def node_id(node: SymbolicExpression) -> UUID:
-    return node._id_
+@dataclass(eq=False)
+class NodeId(SymbolicFunction):
+    """
+    The stable identity of an EQL node, as a value operation.
+    """
+
+    node: SymbolicExpression
+    """
+    The node whose identity is read.
+    """
+
+    def __call__(self) -> UUID:
+        return self.node._id_
+
+    @classmethod
+    def _verbalization_fragment_(cls, fields):
+        from krrood.entity_query_language.verbalization.vocabulary.parts_of_speech import (
+            FunctionVerbalizationTemplates,
+        )
+
+        return FunctionVerbalizationTemplates.possessive(cls, *fields.values())
+
+
+node_id = symbolic_callable_to_function(NodeId)
+
+
+@dataclass(eq=False)
+class NodeDescendants(SymbolicFunction):
+    """
+    The descendants of an EQL node, as a value operation.
+    """
+
+    node: SymbolicExpression
+    """
+    The node whose descendants are read.
+    """
+
+    def __call__(self) -> Iterable[SymbolicExpression]:
+        return self.node._descendants_
+
+    @classmethod
+    def _verbalization_fragment_(cls, fields):
+        from krrood.entity_query_language.verbalization.vocabulary.parts_of_speech import (
+            FunctionVerbalizationTemplates,
+        )
+
+        return FunctionVerbalizationTemplates.possessive(cls, *fields.values())
+
+
+node_descendants = symbolic_callable_to_function(NodeDescendants)
+
+
+@dataclass(eq=False)
+class NodeType(SymbolicFunction):
+    """
+    The selectable type of an EQL node, as a value operation.
+    """
+
+    node: Selectable
+    """
+    The node whose type is read.
+    """
+
+    def __call__(self) -> Optional[Type]:
+        return getattr(self.node, "_type_", None)
+
+    @classmethod
+    def _verbalization_fragment_(cls, fields):
+        from krrood.entity_query_language.verbalization.vocabulary.parts_of_speech import (
+            FunctionVerbalizationTemplates,
+        )
+
+        return FunctionVerbalizationTemplates.possessive(cls, *fields.values())
+
+
+node_type = symbolic_callable_to_function(NodeType)
+
+
+@dataclass(eq=False)
+class NodeChildren(SymbolicFunction):
+    """
+    The children of an EQL node, as a value operation.
+    """
+
+    node: CanBehaveLikeAVariable
+    """
+    The node whose children are read.
+    """
+
+    def __call__(self) -> Iterable[SymbolicExpression]:
+        return self.node._children_
+
+    @classmethod
+    def _verbalization_fragment_(cls, fields):
+        from krrood.entity_query_language.verbalization.vocabulary.parts_of_speech import (
+            FunctionVerbalizationTemplates,
+        )
+
+        return FunctionVerbalizationTemplates.possessive(cls, *fields.values())
+
+
+node_children = symbolic_callable_to_function(NodeChildren)
+
+
+@dataclass(eq=False)
+class AttributeOwnerClass(SymbolicFunction):
+    """
+    The class that owns an attribute, as a value operation.
+    """
+
+    node: Attribute
+    """
+    The attribute whose owner class is read.
+    """
+
+    def __call__(self) -> Type:
+        return self.node._owner_class_
+
+    @classmethod
+    def _verbalization_fragment_(cls, fields):
+        from krrood.entity_query_language.verbalization.vocabulary.parts_of_speech import (
+            FunctionVerbalizationTemplates,
+        )
+
+        return FunctionVerbalizationTemplates.possessive(cls, *fields.values())
+
+
+attribute_owner_class = symbolic_callable_to_function(AttributeOwnerClass)
+
+
+@dataclass(eq=False)
+class NodeParents(SymbolicFunction):
+    """
+    The parents of an EQL node, as a value operation.
+    """
+
+    node: SymbolicExpression
+    """
+    The node whose parents are read.
+    """
+
+    def __call__(self) -> Iterable[SymbolicExpression]:
+        return self.node._parents_
+
+    @classmethod
+    def _verbalization_fragment_(cls, fields):
+        from krrood.entity_query_language.verbalization.vocabulary.parts_of_speech import (
+            FunctionVerbalizationTemplates,
+        )
+
+        return FunctionVerbalizationTemplates.possessive(cls, *fields.values())
+
+
+node_parents = symbolic_callable_to_function(NodeParents)
+
+
+@dataclass(eq=False)
+class IsSubclass(Predicate):
+    """
+    Whether one class is a subclass of another class (or tuple of classes).
+    """
+
+    subclass: Type
+    """
+    The candidate subclass.
+    """
+
+    parent_or_parents: Type | Tuple[Type, ...]
+    """
+    The class or tuple of classes checked against.
+    """
+
+    def __call__(self) -> bool:
+        return issubclass(self.subclass, self.parent_or_parents)
+
+    @classmethod
+    def _verbalization_fragment_(cls, fields: RenderedFields) -> VerbalizationFragment:
+        """:return: the clause *"<subclass> is a subclass of <parent>"* — a custom fragment because
+        the name-based reading lacks the article and preposition (*"subclass holds for …"*).
+        """
+        # Imported locally to avoid the core -> verbalization import cycle (as Triple does).
+        from krrood.entity_query_language.verbalization.vocabulary.parts_of_speech import (
+            clause,
+            Copula,
+            Noun,
+        )
+        from krrood.entity_query_language.verbalization.vocabulary.english import (
+            Prepositions,
+        )
+
+        return clause(
+            Noun(fields["subclass"]),
+            Copula(),
+            Noun("subclass"),
+            Prepositions.OF,
+            Noun(fields["parent_or_parents"]),
+        )
+
+
+issubclass_ = symbolic_callable_to_function(IsSubclass)
+
+
+@dataclass(eq=False)
+class IsClass(Predicate):
+    """
+    Whether an object is a class.
+    """
+
+    object: Any
+    """
+    The object checked.
+    """
+
+    def __call__(self) -> bool:
+        return isclass(self.object)
+
+    @classmethod
+    def _verbalization_fragment_(cls, fields: RenderedFields) -> VerbalizationFragment:
+        """:return: the clause *"<object> is a class"* — a custom fragment because the name-based
+        reading drops the complement's article (*"… is class"*)."""
+        # Imported locally to avoid the core -> verbalization import cycle (as Triple does).
+        from krrood.entity_query_language.verbalization.vocabulary.parts_of_speech import (
+            clause,
+            Copula,
+            Noun,
+        )
+
+        return clause(Noun(fields["object"]), Copula(), Noun("class"))
+
+
+is_class = symbolic_callable_to_function(IsClass)
+
+
+@dataclass(eq=False)
+class RuntimeType(SymbolicFunction):
+    """
+    The runtime class of an object, as a value operation.
+    """
+
+    object: Any
+    """
+    The object whose runtime class is read.
+    """
+
+    def __call__(self) -> Type:
+        return self.object.__class__
+
+    @classmethod
+    def _verbalization_fragment_(cls, fields):
+        from krrood.entity_query_language.verbalization.vocabulary.parts_of_speech import (
+            FunctionVerbalizationTemplates,
+        )
+
+        return FunctionVerbalizationTemplates.possessive(cls, *fields.values())
+
+
+type_ = symbolic_callable_to_function(RuntimeType)
 
 
 @symbolic_function
-def node_descendants(node: SymbolicExpression) -> Iterable[SymbolicExpression]:
-    return node._descendants_
+def type_(obj: Any):
+    """
+    Determines the type of the given object.
 
-
-@symbolic_function
-def node_type(node: Selectable) -> Optional[Type]:
-    return getattr(node, "_type_", None)
-
-
-@symbolic_function
-def node_children(node: CanBehaveLikeAVariable) -> Iterable[SymbolicExpression]:
-    return node._children_
-
-
-@symbolic_function
-def attribute_owner_class(node: Attribute) -> Type:
-    return node._owner_class_
-
-
-@symbolic_function
-def node_parents(node: SymbolicExpression) -> Iterable[SymbolicExpression]:
-    return node._parents_
-
-
-@symbolic_function
-def issubclass_(cls: Type, cls_or_tuple: Type | Tuple[Type, ...]) -> bool:
-    return issubclass(cls, cls_or_tuple)
-
-
-@symbolic_function
-def is_class(obj: Any) -> bool:
-    return isclass(obj)
-
-
-@symbolic_function
-def type_(obj: Any) -> Type:
-    return obj.__class__
+    :param obj: The object whose type is to be determined.
+    :return: The type of the given object.
+    """
+    return type(obj)

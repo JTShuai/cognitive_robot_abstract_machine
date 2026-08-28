@@ -16,7 +16,12 @@ Coverage:
 from __future__ import annotations
 
 import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from krrood.entity_query_language.verbalization.boolean_predicate import (
+    AdjectivalPredicate,
+)
+from krrood.entity_query_language.verbalization.grammar_metadata import GrammarMetadata
 from typing import Any
 from typing_extensions import List
 
@@ -39,7 +44,12 @@ from krrood.entity_query_language.factories import (
     and_,
     or_,
 )
-from krrood.entity_query_language.predicate import HasType, HasTypes, Predicate, Triple
+from krrood.entity_query_language.predicate import (
+    HasType,
+    HasTypes,
+    Predicate,
+    Triple,
+)
 from krrood.entity_query_language.verbalization.exceptions import (
     PredicateFragmentRequiredError,
 )
@@ -49,6 +59,7 @@ from krrood.entity_query_language.verbalization.vocabulary.parts_of_speech impor
     clause,
     Copula,
     Noun,
+    predicate_clause,
     Verb,
 )
 from krrood.entity_query_language.verbalization.pipeline import (
@@ -109,9 +120,7 @@ class BankTransaction:
     booking_date: datetime.datetime
 
 
-# ── Sanity / regression tests ──────────────────────────────────────────────────
-
-
+# %% Sanity / regression tests
 def test_all_rules_registry_is_populated():
     """
     RULES must be non-empty after import — otherwise every expression falls back to its
@@ -166,9 +175,7 @@ def test_verbalization_produces_natural_language_not_repr():
     assert "10" in result
 
 
-# ── Unit tests: leaves ─────────────────────────────────────────────────────────
-
-
+# %% Unit tests: leaves
 def test_verbalize_variable_first_mention():
     x = variable(int, [1, 2])
     assert verbalize_expression(x) == "an Integer"
@@ -245,7 +252,7 @@ def test_verbalize_has_types_is_membership():
 
 def test_verbalize_has_types_lists_all_admissible_types():
     """Every admissible type is listed disjunctively -- ``isinstance`` over the tuple holds for ANY of
-    them -- joined by the :class:`Or` element with an oxford comma before the final *"or"*.
+    them -- joined by the :class:`DisjunctivePhrase` element with an oxford comma before the final *"or"*.
     """
     subject = variable(Body, [])
     many = (
@@ -264,9 +271,7 @@ def test_verbalize_has_types_lists_all_admissible_types():
     )
 
 
-# ── Unit tests: MappedVariable chain ──────────────────────────────────────────
-
-
+# %% Unit tests: MappedVariable chain
 def test_verbalize_attribute_uses_of_form():
     employee = variable(Employee, [])
     text = verbalize_expression(employee.salary)
@@ -384,9 +389,7 @@ def test_verbalize_second_index_ordinal():
     assert "completed" in text
 
 
-# ── Relational navigation: a verb-named hop reads as a relative clause ────────────
-
-
+# %% Relational navigation: a verb-named hop reads as a relative clause
 @dataclass
 class _NavRobot:
     operational: bool
@@ -437,7 +440,10 @@ class _NavParcel:
 
 @dataclass
 class _NavPanel:
-    lit: bool
+    # "lit" is an irregular participle the shape heuristic misses, so it declares its form.
+    lit: bool = field(
+        metadata=GrammarMetadata(boolean_predicate=AdjectivalPredicate()).as_dict()
+    )
 
 
 @dataclass
@@ -579,9 +585,7 @@ def test_genitive_omits_article_before_an_uncountable_noun():
     )
 
 
-# ── Relational navigation: pronominalisation of the relative-clause owner ─────────
-
-
+# %% Relational navigation: pronominalisation of the relative-clause owner
 def test_relational_navigation_pronominalises_the_subject():
     """
     When the chain root is the query subject, a deferred relational chain pronominalises
@@ -718,14 +722,14 @@ def test_its_continues_uniformly_once_the_subject_licenses_it():
     )
 
 
-def test_two_distinct_relational_referents_are_numbered():
+def test_two_distinct_relational_referents_are_distinguished():
     """
-    Two distinct relational referents of the same type are numbered *"Robot 1"* /
-    *"Robot 2"* (bare, matching the variable convention) to tell them apart.
+    Two distinct relational referents of the same type are told apart by the pair
+    determiner (*"the … Robot"* / *"the other … Robot"*), not a number.
 
-    A following attribute spells the numbered owner out (*"the power of Robot 1"*)
-    rather than *"its power"* — the first clause's subject was the battery, not the
-    robot.
+    A following attribute spells the distinguished owner out (*"the power of the
+    _NavRobot"*) rather than *"its power"* — the first clause's subject was the battery,
+    not the robot.
     """
     p = variable(_NavPair, [])
     text = verbalize_expression(
@@ -738,19 +742,19 @@ def test_two_distinct_relational_referents_are_numbered():
         )
     )
     assert text == (
-        "Find a _NavPair such that the battery of _NavRobot 1, to which its primary is "
-        "assigned, is greater than 5, the power of _NavRobot 1 is greater than 1, and the "
-        "battery of _NavRobot 2, to which its secondary is assigned, is greater than 3"
+        "Find a _NavPair such that the battery of the _NavRobot to which its primary is "
+        "assigned is greater than 5, the power of the _NavRobot is greater than 1, and the "
+        "battery of the other _NavRobot, to which its secondary is assigned, is greater than 3"
     )
 
 
-def test_single_relational_referent_is_not_numbered():
+def test_single_relational_referent_is_not_distinguished():
     """
     A lone relational referent (no same-type collision) keeps the plain definite form.
     """
     m = variable(_NavMission, [])
     text = verbalize_expression(an(entity(m).where(m.assigned_to.battery > 5)))
-    assert "_NavRobot 1" not in text
+    assert "the other _NavRobot" not in text
     assert "the _NavRobot to which it is assigned" in text
 
 
@@ -809,9 +813,7 @@ def test_verbalize_flat_variable_delegates_to_child():
     assert "drawers" in text
 
 
-# ── Unit tests: comparators ────────────────────────────────────────────────────
-
-
+# %% Unit tests: comparators
 @pytest.mark.parametrize(
     "op,word",
     [
@@ -843,9 +845,7 @@ def test_verbalize_comparator_at_least():
     assert "at least" in text
 
 
-# ── Unit tests: logical operators ─────────────────────────────────────────────
-
-
+# %% Unit tests: logical operators
 def test_verbalize_and_chain_flattening():
     x = variable(int, [])
     cond = and_(x > 1, x < 10, x != 5)
@@ -901,9 +901,7 @@ def test_verbalize_not_complex_fallback():
     assert " or " in text
 
 
-# ── Unit tests: aggregators ────────────────────────────────────────────────────
-
-
+# %% Unit tests: aggregators
 def test_verbalize_count():
     x = variable(int, [1, 2])
     text = verbalize_expression(eql.count(x))
@@ -1038,9 +1036,7 @@ def test_grouped_having_on_max_fronts_onto_group_key():
     assert "is greater than 100, report the maximum of" in text
 
 
-# ── Nested sub-queries as values (the imperative "Find" is reserved for the top level) ──
-
-
+# %% Nested sub-queries as values (the imperative "Find" is reserved for the top level)
 def test_nested_unconstrained_aggregation_no_second_find():
     """
     An aggregation sub-query used as a comparison value must not emit a second 'Find'.
@@ -1289,10 +1285,10 @@ def test_nested_constrained_aggregation_scope_is_plural_unnumbered():
     assert "BankTransaction 2" not in text, f"Spurious numbering in: {text!r}"
 
 
-def test_nested_non_aggregation_entity_keeps_numbering():
+def test_nested_non_aggregation_entity_keeps_distinguishing():
     """
-    A genuine (non-aggregation) entity sub-query is a specific entity and keeps its
-    disambiguation number.
+    A genuine (non-aggregation) entity sub-query is a specific, distinct entity and
+    keeps told apart by the pair determiner.
     """
     t1 = variable(BankTransaction, domain=None)
     t2 = variable(BankTransaction, domain=None)
@@ -1300,12 +1296,10 @@ def test_nested_non_aggregation_entity_keeps_numbering():
         entity(t1).where(t1 == an(entity(t2).where(t2.amount_details.amount > 100)))
     )
     text = verbalize_expression(query)
-    assert "BankTransaction 1" in text and "BankTransaction 2" in text, f"Got: {text!r}"
+    assert "another BankTransaction" in text, f"Got: {text!r}"
 
 
-# ── Integration: target test cases ────────────────────────────────────────────
-
-
+# %% Integration: target test cases
 def test_verbalize_presentation_example():
     robots = [
         _Robot("Robot1", 100, [_Task("Task1", True)]),
@@ -1551,9 +1545,7 @@ def test_verbalize_has_type_with_exists():
     assert "is of type" in text
 
 
-# ── Predicate fragment tests ────────────────────────────────────────────────────
-
-
+# %% Predicate fragment tests
 def test_verbalize_has_type():
     fruit = variable(Body, [])
     predicate = HasType(fruit, Apple)
@@ -1610,7 +1602,7 @@ def test_verbalize_custom_predicate_robotics_domain(handles_and_containers_world
     handle = variable(Handle, world.bodies)
     predicate = IsReachable(handle)
     text = verbalize_expression(predicate)
-    assert "Handle" in text
+    assert "a Handle" in text
     assert "is reachable" in text
 
 
@@ -1643,12 +1635,12 @@ def test_verbalize_custom_predicate_employee_domain():
 
 def test_verbalize_predicate_without_fragment_raises():
     """
-    A predicate that supplies no verbalization fragment is an error — there is no name-
-    based string fallback; fragments are required.
+    A predicate that does not implement a fragment is an undecided surface — verbalizing
+    it fails loudly instead of guessing a sentence.
     """
 
     @dataclass(eq=False)
-    class HasHighSalary(Predicate):
+    class EarnsMoreThan(Predicate):
         employee: Any
         threshold: float
 
@@ -1657,10 +1649,41 @@ def test_verbalize_predicate_without_fragment_raises():
 
     employee = variable(Employee, [])
     with pytest.raises(PredicateFragmentRequiredError):
-        verbalize_expression(HasHighSalary(employee, 50000.0))
+        verbalize_expression(EarnsMoreThan(employee, 50000.0))
 
 
-def test_verbalize_predicate_without_fragment_no_args_raises():
+def test_name_based_clause_reads_a_verb_name_verb_first():
+    """
+    A fragment built from ``predicate_clause(cls, …)`` says the class name as the clause
+    — verb-first for a plain verb name (``EarnsMoreThan`` → *"… earns more than …"*).
+    """
+
+    @dataclass(eq=False)
+    class EarnsMoreThan(Predicate):
+        employee: Any
+        threshold: float
+
+        def __call__(self) -> bool:
+            return self.employee.salary > self.threshold
+
+        @classmethod
+        def _verbalization_fragment_(cls, fields):
+            subject, *objects = fields.values()
+            return predicate_clause(cls, subject, *objects)
+
+    employee = variable(Employee, [])
+    assert (
+        verbalize_expression(EarnsMoreThan(employee, 50000.0))
+        == "an Employee earns more than 50000.0"
+    )
+
+
+def test_name_based_clause_reads_a_copular_name_as_subject_is_complement():
+    """
+    A ``predicate_clause`` over a copular ``Is…`` name reads as *"<subject> is
+    <complement>"*.
+    """
+
     @dataclass(eq=False)
     class IsActive(Predicate):
         entity: Any
@@ -1668,14 +1691,16 @@ def test_verbalize_predicate_without_fragment_no_args_raises():
         def __call__(self) -> bool:
             return True
 
+        @classmethod
+        def _verbalization_fragment_(cls, fields):
+            subject, *objects = fields.values()
+            return predicate_clause(cls, subject, *objects)
+
     employee = variable(Employee, [])
-    with pytest.raises(PredicateFragmentRequiredError):
-        verbalize_expression(IsActive(employee))
+    assert verbalize_expression(IsActive(employee)) == "an Employee is active"
 
 
-# ── Aggregator coreference & HAVING compact form ──────────────────────────────
-
-
+# %% Aggregator coreference & HAVING compact form
 def test_aggregator_coreference_second_mention_is_the(
     departments_and_employees_fixture,
 ):
@@ -1800,9 +1825,7 @@ def test_set_of_grouped_by_reports_without_restating_the_key(
     assert "whose" in text and "30000" in text
 
 
-# ── Comparator "is" form ──────────────────────────────────────────────────────
-
-
+# %% Comparator "is" form
 def test_verbalize_comparator_eq_uses_is():
     x = variable(int, [])
     text = verbalize_expression(x == 5)
@@ -1840,9 +1863,7 @@ def test_verbalize_having_eq_uses_is_copula():
     assert "is equal to 2" in whose_part
 
 
-# ── Non-predicate InstantiatedVariable natural-English form ───────────────────
-
-
+# %% Non-predicate InstantiatedVariable natural-English form
 def test_verbalize_inference_no_sub_query(doors_and_drawers_world):
     """
     inference(...) with plain variable bindings: 'where' clause, no 'such that'.
@@ -1976,9 +1997,7 @@ def test_verbalize_double_nested_with_outer_entity(doors_and_drawers_world):
     assert text.count("such that") == 2
 
 
-# ── 2-argument Predicate triple form ─────────────────────────────────────────
-
-
+# %% 2-argument Predicate triple form
 def test_verbalize_triple():
     @dataclass(eq=False)
     class ConnectsTo(Triple):
@@ -2001,17 +2020,17 @@ def test_verbalize_triple():
     predicate = ConnectsTo(source, target)
     text = verbalize_expression(predicate)
 
-    assert "Body" in text
+    assert "a Body" in text
     assert "connects to" in text
-    assert "Handle" in text
+    assert "a Handle" in text
     # Subject–predicate–object order
     assert text.index("Body") < text.index("Handle")
 
 
 def test_verbalize_1arg_predicate_without_fragment_raises():
     """
-    A 1-arg predicate without a verbalization fragment is an error — fragments are
-    required, with no generic name-based fallback.
+    A 1-arg predicate without a fragment raises — the surface must always be an explicit
+    decision, never a silent guess.
     """
 
     @dataclass(eq=False)
@@ -2026,40 +2045,39 @@ def test_verbalize_1arg_predicate_without_fragment_raises():
         verbalize_expression(IsActive(employee))
 
 
-# ── Same-type variable disambiguation ─────────────────────────────────────────
-
-
+# %% Same-type variable disambiguation
 def test_two_same_type_variables_are_disambiguated():
     """
-    Two distinct variables of the same type must get numbered labels to tell them apart.
+    Two distinct variables of the same type must be told apart by the pair determiner.
 
     Currently both variables produce 'an Employee', making the output ambiguous:
     'an Employee's salary is greater than an Employee's salary'
-    Expected: 'Employee 1's salary is greater than Employee 2's salary'
+    Expected: 'an Employee's salary is greater than another Employee's salary'
     """
     employee1 = variable(Employee, [])
     employee2 = variable(Employee, [])
     cond = employee1.salary > employee2.salary
     text = verbalize_expression(cond)
-    assert "Employee 1" in text, f"Expected 'Employee 1' in: {text!r}"
-    assert "Employee 2" in text, f"Expected 'Employee 2' in: {text!r}"
+    assert "an Employee" in text, f"Expected 'an Employee' in: {text!r}"
+    assert "another Employee" in text, f"Expected 'another Employee' in: {text!r}"
 
 
 def test_two_same_type_variables_in_query_are_disambiguated():
     """
-    Two same-type variables inside a query must each get distinct numbered labels.
+    Two same-type variables inside a query must each be told apart by the pair
+    determiner.
     """
     employee1 = variable(Employee, [])
     employee2 = variable(Employee, [])
     query = an(entity(employee1).where(employee1.salary > employee2.salary))
     text = verbalize_expression(query)
-    assert "Employee 1" in text, f"Expected 'Employee 1' in: {text!r}"
-    assert "Employee 2" in text, f"Expected 'Employee 2' in: {text!r}"
+    assert "an Employee" in text, f"Expected 'an Employee' in: {text!r}"
+    assert "another Employee" in text, f"Expected 'another Employee' in: {text!r}"
 
 
 def test_three_same_type_variables_are_disambiguated():
     """
-    Three variables of the same type each get distinct numbered labels.
+    Three variables of the same type each get a distinct ordinal to tell them apart.
     """
     employee1 = variable(Employee, [])
     employee2 = variable(Employee, [])
@@ -2070,19 +2088,20 @@ def test_three_same_type_variables_are_disambiguated():
         )
     )
     text = verbalize_expression(query)
-    assert "Employee 1" in text, f"Expected 'Employee 1' in: {text!r}"
-    assert "Employee 2" in text, f"Expected 'Employee 2' in: {text!r}"
-    assert "Employee 3" in text, f"Expected 'Employee 3' in: {text!r}"
+    assert "an Employee" in text, f"Expected 'an Employee' in: {text!r}"
+    assert "a second Employee" in text, f"Expected 'a second Employee' in: {text!r}"
+    assert "a third Employee" in text, f"Expected 'a third Employee' in: {text!r}"
 
 
-def test_single_type_variable_not_numbered():
+def test_single_type_variable_not_disambiguated():
     """
-    A single variable of a type must keep the plain 'an Employee' form — no numbering.
+    A single variable of a type must keep the plain 'an Employee' form — no
+    disambiguation.
     """
     employee = variable(Employee, [])
     text = verbalize_expression(employee)
     assert "an Employee" in text, f"Expected 'an Employee' in: {text!r}"
-    assert "Employee 1" not in text, f"Did not expect numbering in: {text!r}"
+    assert "another Employee" not in text, f"Did not expect disambiguation in: {text!r}"
 
 
 def test_number_of_business_transactions():
@@ -2324,9 +2343,7 @@ def test_grouped_by_without_instantiated_variable(handles_and_containers_world):
     )
 
 
-# ── Fixture ────────────────────────────────────────────────────────────────────
-
-
+# %% Fixture
 @pytest.fixture
 def departments_and_employees_fixture():
     d1 = Department("HR")
@@ -2336,9 +2353,7 @@ def departments_and_employees_fixture():
     return [d1, d2], [e1, e2]
 
 
-# ── Reference pronouns, condition grouping, range folding, calc-equality ────────
-
-
+# %% Reference pronouns, condition grouping, range folding, calc-equality
 def test_example_sum_between_full_sentence():
     """
     Motivating example 1: pronoun + calc-equality + 'whose … between' in the aggregation
@@ -2636,9 +2651,7 @@ def test_range_fold_without_subject_has_no_whose():
     assert "booking_date of" in text, f"Expected full chain in: {text!r}"
 
 
-# ── Generality: a second domain (Employee) ──────────────────────────────────────
-
-
+# %% Generality: a second domain (Employee)
 def test_second_domain_whose_single_predicate():
     employee = variable(Employee, domain=None)
     query = an(entity(employee).where(employee.salary > 50000))
@@ -2671,9 +2684,7 @@ def test_second_domain_calc_equality_in_whose():
     assert "average of salaries" in text, f"Got: {text!r}"
 
 
-# ── Declarative-rule unit tests ─────────────────────────────────────────────────
-
-
+# %% Declarative-rule unit tests
 def test_is_calculation_value_predicate():
     from krrood.entity_query_language.query.aggregation_structure import (
         is_calculation_value,
@@ -2755,9 +2766,7 @@ def test_pr_example():
     )
 
 
-# ── verbalize_expression renderer argument tests ──────────────────────────────
-
-
+# %% verbalize_expression renderer argument tests
 def test_verbalize_expression_no_renderer_backward_compatible():
     """
     Calling verbalize_expression matches pipeline plain output.

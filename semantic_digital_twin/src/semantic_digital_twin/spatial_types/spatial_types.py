@@ -497,6 +497,20 @@ class HomogeneousTransformationMatrix(
             child_frame=self.child_frame,
         )
 
+    def copy_with_new_reference_frames(
+        self,
+        new_reference_frame: KinematicStructureEntity,
+        new_child_frame: KinematicStructureEntity | None,
+    ) -> HomogeneousTransformationMatrix:
+        """
+        Copies the transformation matrix and changes the reference and child frames.
+        """
+        return HomogeneousTransformationMatrix(
+            data=deepcopy(self.casadi_sx),
+            reference_frame=new_reference_frame,
+            child_frame=new_child_frame,
+        )
+
     def __hash__(self):
         if self.is_constant():
             return hash(
@@ -772,6 +786,39 @@ class RotationMatrix(sm.SymbolicMathType, SpatialType, SubclassJSONSerializer):
             reference_frame=reference_frame,
         )
         return R
+
+    @classmethod
+    def from_x_axis(
+        cls,
+        x: Vector3,
+        reference_frame: Optional[KinematicStructureEntity] = None,
+    ) -> RotationMatrix:
+        """
+        Create a rotation matrix from the direction its x-axis points along.
+
+        The y- and z-axis only complete the frame and are otherwise arbitrary.
+
+        :param x: the direction the x-axis should point along
+        :param reference_frame: the frame the resulting rotation matrix is expressed in
+        :return: a rotation matrix whose x-axis points along ``x``
+        """
+        # Crossing a direction with a world axis degenerates when the two are parallel, so
+        # pick whichever of the X/Y axes yields the better-conditioned (longer) cross
+        # product.
+        frame_V_cross_x = x.cross(Vector3.X())
+        frame_V_cross_y = x.cross(Vector3.Y())
+        y = Vector3.from_iterable(
+            [
+                sm.if_greater(
+                    frame_V_cross_x.norm(),
+                    frame_V_cross_y.norm(),
+                    frame_V_cross_x[i],
+                    frame_V_cross_y[i],
+                )
+                for i in range(3)
+            ]
+        )
+        return cls.from_vectors(x=x, y=y, reference_frame=reference_frame)
 
     @classmethod
     def from_rpy(

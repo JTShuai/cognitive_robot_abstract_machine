@@ -11,8 +11,7 @@ from krrood.entity_query_language.rules.conclusion_selector import ConclusionSel
 from krrood.entity_query_language.query.query import (
     Query,
 )
-from krrood.entity_query_language.query.operations import OrderedBy, GroupedBy
-from krrood.entity_query_language.query.quantifiers import ResultQuantifier
+from krrood.entity_query_language.query.operations import GroupedBy
 from krrood.entity_query_language.operators.concatenation import Concatenation
 from krrood.entity_query_language.operators.aggregators import Aggregator
 from krrood.entity_query_language.operators.core_logical_operators import (
@@ -26,7 +25,6 @@ from krrood.entity_query_language.evaluation import is_condition_participant
 from krrood.entity_query_language.core.variable import (
     Variable,
     Literal,
-    InstantiatedVariable,
 )
 from krrood.entity_query_language.core.mapped_variable import (
     MappedVariable,
@@ -37,11 +35,9 @@ from krrood.entity_query_language.core.mapped_variable import (
 )
 from krrood.entity_query_language.operators.comparator import Comparator
 
-from krrood.rustworkx_utils import (
-    GraphVisualizer,
-    RWXNode as RXUtilsNode,
-    ColorLegend as RXUtilsColorLegend,
-)
+from krrood.rustworkx_utils.graph_visualizer import GraphVisualizer
+from krrood.rustworkx_utils.rxnode import RWXNode as RXUtilsNode
+from krrood.rustworkx_utils.utils import ColorLegend as RXUtilsColorLegend
 
 import rustworkx as rx
 
@@ -55,12 +51,13 @@ def _is_faded_gate(node, satisfied_condition_ids: OrderedSet[UUID]) -> bool:
     Such nodes act as "gates" that the BFS in
     :meth:`QueryGraph._propagate_faded_subtrees` refuses to traverse through.
     """
-    expr = node.data
-    if expr is None:
+    expression = node.data
+    if expression is None:
         return False
-    if not is_condition_participant(expr):
+    parent_expression = node.parent.data if node.parent is not None else None
+    if not is_condition_participant(expression, parent=parent_expression):
         return False
-    return expr._id_ not in satisfied_condition_ids
+    return expression._id_ not in satisfied_condition_ids
 
 
 @dataclass
@@ -225,6 +222,8 @@ class QueryGraph:
         """
         Construct the graph representation of the query, used for visualization and
         introspection.
+
+        :param expression: The expression to add, defaulting to the query's root.
         """
         expression = expression if expression is not None else self.query._root_
 
@@ -233,7 +232,6 @@ class QueryGraph:
 
         is_satisfied = (
             self.satisfied_condition_ids is not None
-            and is_condition_participant(expression)
             and expression._id_ in self.satisfied_condition_ids
         )
         node = QueryNode(
@@ -245,7 +243,7 @@ class QueryGraph:
         )
         self.expression_node_map[expression] = node
 
-        if isinstance(expression, ResultQuantifier):
+        if isinstance(expression, Query):
             node.wrap_subtree = True
 
         self._add_children_to_graph(node)
@@ -291,14 +289,11 @@ class ColorLegend(RXUtilsColorLegend):
         name = expression.__class__.__name__
         color = "white"
         match expression:
-            case Filter() | OrderedBy() | GroupedBy():
+            case Filter() | GroupedBy():
                 color = "#17becf"
             case Aggregator():
                 name = "Aggregator"
                 color = "#F54927"
-            case ResultQuantifier():
-                name = "ResultQuantifier"
-                color = "#9467bd"
             case Query():
                 name = "QueryObjectDescriptor"
                 color = "#d62728"
@@ -307,7 +302,6 @@ class ColorLegend(RXUtilsColorLegend):
             case Variable():
                 color = "cornflowerblue"
             case Concatenation():
-                name = "Union"
                 color = "#949292"
             case MappedVariable():
                 name = "DomainMapping"

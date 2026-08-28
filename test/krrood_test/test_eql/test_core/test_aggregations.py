@@ -1,10 +1,12 @@
 from collections import defaultdict
 from dataclasses import dataclass
+from types import NoneType
 
 import pytest
 from typing_extensions import Type, Any
 
 import krrood.entity_query_language.factories as eql
+from krrood import logger
 from krrood.entity_query_language.exceptions import (
     NonAggregatedSelectedVariablesError,
     AggregatorInWhereConditionsError,
@@ -22,7 +24,12 @@ from krrood.entity_query_language.factories import (
     flat_variable,
 )
 from krrood.inheritance_path_length import inheritance_path_length
-from random_events.interval import SimpleInterval, Bound
+try:
+    from random_events.interval import SimpleInterval, Bound
+except ImportError as e:
+    logger.debug(f"Could not import randome_events: {e}")
+    SimpleInterval = NoneType
+    Bound = NoneType
 from ...dataset.example_classes import KRROODVectorsWithProperty
 from krrood.entity_query_language.predicate import length, symbolic_function
 from krrood.entity_query_language.query.operations import GroupedBy
@@ -502,9 +509,10 @@ def test_having_node_hierarchy(departments_and_employees):
         set_of(department, avg_salary).grouped_by(department).having(avg_salary > 20000)
     ).build()
 
-    # Graph hierarchy check
-    assert query._having_expression_._parent_ is query
-    assert isinstance(query._having_expression_.grouped_by, GroupedBy)
+    # Graph hierarchy check: the having node is wired into the compiled product the query delegates to.
+    product = query._expression_
+    assert product._having_expression_._parent_ is product
+    assert isinstance(product._having_expression_.grouped_by, GroupedBy)
     assert query._conditions_root_._name_ == ">"
 
 
@@ -739,6 +747,7 @@ def test_nearest_object_type():
     assert best_object_and_distance[min_distance] == 1
 
 
+@pytest.mark.skipif(SimpleInterval is NoneType, reason="Could not import random events")
 def test_count_range():
     domain = ["chair", "chair", ..., ..., ..., "table"]
     type_var = variable(object, domain=domain)
@@ -760,6 +769,7 @@ def test_count_range_no_unknowns():
     assert result[0] == 2
 
 
+@pytest.mark.skipif(SimpleInterval is NoneType, reason="Could not import random events")
 def test_count_range_all_unknowns():
     domain = [..., ..., ...]
     type_var = variable(object, domain=domain)

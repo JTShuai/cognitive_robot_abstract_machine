@@ -16,7 +16,6 @@ from inspect import ismethod, isfunction, isclass
 from typing import assert_never, Any
 
 import rustworkx as rx
-from inspect import ismethod, isclass, isfunction
 from typing_extensions import (
     Optional,
     Type,
@@ -26,53 +25,43 @@ from typing_extensions import (
     TYPE_CHECKING,
     Self,
     Iterator,
-    get_type_hints,
 )
 
-from krrood.adapters.json_serializer import list_like_classes
-from krrood.class_diagrams.class_diagram import WrappedClass
 from krrood.class_diagrams.utils import get_type_hints_of_object
 from krrood.entity_query_language.core.base_expressions import (
     Selectable,
     SymbolicExpression,
 )
+from krrood.entity_query_language.operators.causal import (
+    Cause,
+    CausesEffect,
+    Confounder,
+)
+from krrood.entity_query_language.core.helpers import _resolve_domain
 from krrood.entity_query_language.core.mapped_variable import (
     Attribute,
     FlatVariable,
     CanBehaveLikeAVariable,
     MappedVariable,
-    Index,
+    IndexByValue,
 )
 from krrood.entity_query_language.core.variable import Literal, DomainType, Variable
 from krrood.entity_query_language.evaluable import Evaluable
 from krrood.entity_query_language.exceptions import (
     CalledMatchMultipleTimes,
     MatchTypeCannotBeDetermined,
+    ReadOnlyMapping,
 )
 from krrood.entity_query_language.predicate import HasType
 from krrood.entity_query_language.query.quantifiers import An, ResultQuantifier
 from krrood.entity_query_language.utils import T
 from krrood.patterns.factory_and_kwargs import HasFactoryAndKwargs
-from krrood.rustworkx_utils import RWXNode
+from krrood.rustworkx_utils.rxnode import RWXNode
 from krrood.symbol_graph.helpers import get_field_type_endpoint
 
 if TYPE_CHECKING:
     from krrood.entity_query_language.factories import ConditionType
     from krrood.entity_query_language.query.query import Entity, Query
-
-from typing import get_type_hints
-
-
-import builtins
-import importlib
-from typing import get_type_hints, get_origin, get_args
-from inspect import isclass
-
-
-import builtins
-import importlib
-from typing import get_type_hints, get_origin, get_args
-from inspect import isclass
 
 
 @dataclass
@@ -286,6 +275,11 @@ class Match(Evaluable, AbstractMatchExpression[T], HasFactoryAndKwargs[T]):
         Update the match with new keyword arguments to constrain the type we are
         matching with.
 
+        Eagerly creates the match's subject variable so it can be referenced in
+        ``where`` conditions immediately (lowering the pattern into conditions stays
+        lazy, tracked by ``resolved``). If this match is later nested under a parent,
+        the parent overwrites the subject with its own attribute during resolution.
+
         :param kwargs: The keyword arguments to match against.
         :return: The current match instance after updating it with the new keyword
             arguments.
@@ -294,6 +288,8 @@ class Match(Evaluable, AbstractMatchExpression[T], HasFactoryAndKwargs[T]):
             raise CalledMatchMultipleTimes(self)
         self.kwargs = kwargs
         self._has_been_called = True
+        if self.variable is None:
+            self.create_or_update_variable()
         return self
 
     @property
@@ -306,7 +302,7 @@ class Match(Evaluable, AbstractMatchExpression[T], HasFactoryAndKwargs[T]):
         if self._expression is not None:
             return self._expression
 
-        if self.variable is None:
+        if not self.resolved:
             self.resolve()
         entity_ = entity(self.variable)
         if self.conditions:
@@ -404,14 +400,27 @@ class Match(Evaluable, AbstractMatchExpression[T], HasFactoryAndKwargs[T]):
         if variable is not None:
             self.variable = variable
         elif self.variable is None:
-            self.create_variable()
+            self.create_or_update_variable()
 
         self.parent = parent
 
-    def create_variable(self):
-        from krrood.entity_query_language.factories import variable
+    def create_or_update_variable(self):
+        """
+        Create the subject variable from this match's current type and domain.
 
-        self.variable = variable(self.type, domain=self.domain)
+        If a subject variable already exists (``from_`` re-scoping the domain after
+        ``__call__`` eagerly created one), its domain is updated in place instead of
+        replacing the variable outright: conditions built earlier against ``self.variable``
+        (for example from an already-recorded ``where``) reference that same object, so
+        replacing it would silently orphan them from the re-scoped domain.
+        """
+        if self.variable is None:
+            from krrood.entity_query_language.factories import variable
+
+            self.variable = variable(self.type, domain=self.domain)
+            return
+
+        self.variable._update_domain_(_resolve_domain(self.type, self.domain))
 
     def _evaluate_natively_(self) -> Iterator:
         """
@@ -460,6 +469,18 @@ class Match(Evaluable, AbstractMatchExpression[T], HasFactoryAndKwargs[T]):
         return isinstance(value, type(Ellipsis))
 
     @property
+    def has_cause_attributes(self) -> bool:
+        """
+        :return: Whether any attribute anywhere in this match's pattern (including nested
+            matches) is marked with :func:`~krrood.entity_query_language.factories.cause` --
+            a ``do()``-intervention target only a causal backend can resolve.
+        """
+        return any(
+            isinstance(attribute_match.assigned_value, Cause)
+            for attribute_match in self.matches_with_variables
+        )
+
+    @property
     def name(self) -> str:
         type_name = self.type.__name__ if self.type is not None else "?"
         return f"Match({type_name})"
@@ -477,6 +498,36 @@ class Match(Evaluable, AbstractMatchExpression[T], HasFactoryAndKwargs[T]):
         self.expression.build()
         return self
 
+    def causes_effect(self, *conditions: ConditionType) -> Match[T]:
+        """
+        Mark condition(s) as the effect side of a causal query, e.g.
+        ``a(Pick)(arm=cause).causes_effect(pick.variable.action.status == SUCCESS)``.
+
+        Sugar for ``self.where(CausesEffect(and_(*conditions), cause_attributes=...))``:
+        semantically identical to an ordinary ``.where()`` under every backend except
+        :class:`~krrood.entity_query_language.backends.ProbabilisticBackend`, which reads
+        the wrapped condition to find which variable(s) a
+        :data:`~krrood.entity_query_language.factories.cause` search should optimize for.
+        The ``cause``-marked attribute(s) are also attached to the built
+        :class:`~krrood.entity_query_language.operators.causal.CausesEffect` node, so its
+        verbalization can name them.
+
+        :param conditions: One literal comparator, or several combined with AND.
+        :return: This match, for chaining.
+        """
+        # `and_` stays a local import: factories.py imports this module, so a module-level
+        # import here would be circular.
+        from krrood.entity_query_language.factories import and_
+
+        cause_attributes = [
+            attribute_match.attribute
+            for attribute_match in self.matches_with_variables
+            if isinstance(attribute_match.assigned_value, Cause)
+        ]
+        return self.where(
+            CausesEffect(and_(*conditions), cause_attributes=cause_attributes)
+        )
+
     def from_(self, domain: DomainType) -> Self:
         """
         Range the match over ``domain`` instead of over all instances of its type.
@@ -487,10 +538,18 @@ class Match(Evaluable, AbstractMatchExpression[T], HasFactoryAndKwargs[T]):
         get the lowered selection query when you need symbolic attribute access (``.parent`` /
         ``.child``), ``the(...)`` or ``set_of(...)``.
 
+        .. note::
+            ``__call__`` eagerly creates a subject variable before the domain is known (and with
+            no domain that is a SymbolGraph-wide variable for Symbol types). ``create_or_update_variable``
+            re-scopes that same variable's domain in place (see its docstring) rather than
+            replacing it, so a ``where`` recorded before this call keeps referencing the correct,
+            now domain-scoped, variable.
+
         :param domain: The instances the match ranges over.
         :return: This match, for chaining.
         """
         self.domain = domain
+        self.create_or_update_variable()
         return self
 
     def _update_kwargs_from_literal_values(self):
@@ -571,8 +630,9 @@ class AttributeMatch(AbstractMatchExpression[T]):
         Resolve the attribute assignment by creating the conditions and applying the
         necessary mappings to the attribute.
         """
-        if not isinstance(self.assigned_value, AbstractMatchExpression) or (
-            self.assigned_value.variable or self.assigned_value.resolved
+        if (
+            not isinstance(self.assigned_value, AbstractMatchExpression)
+            or self.assigned_value.resolved
         ):
             self.conditions.append(self.attribute == self.assigned_variable)
             return
@@ -591,6 +651,19 @@ class AttributeMatch(AbstractMatchExpression[T]):
         """
         if isinstance(self.assigned_value, AbstractMatchExpression):
             return self.assigned_value.variable
+        if (
+            isinstance(self.assigned_value, (Cause, Confounder))
+            and self.assigned_value._type_ is None
+        ):
+            # `cause`/`confounder` are shared instances written directly into every
+            # matching kwarg, so unlike a plain literal (whose `Literal` wrapper is
+            # created fresh right here, with `_type_=self.type`), an unresolved one has
+            # no declared type of its own yet, and mutating it in place would corrupt
+            # every other field also marked `cause`/`confounder`. Return a fresh,
+            # per-attribute copy with the type filled in instead, so code reading
+            # `assigned_variable._type_` (parametrization, generation) sees the
+            # attribute's declared type without touching the shared original.
+            return type(self.assigned_value)(_type_=self.type)
         elif not isinstance(self.assigned_value, SymbolicExpression):
             return Literal(
                 _name__=self.variable._name_,
@@ -646,10 +719,10 @@ class AttributeMatch(AbstractMatchExpression[T]):
         for step in self.variable._access_path_[:-1]:
             if isinstance(step, Attribute):
                 current_value = current_value.kwargs[step._attribute_name_]
-            elif isinstance(step, Index):
+            elif isinstance(step, IndexByValue):
                 current_value = current_value[step._key_]
             else:
-                assert_never(step)
+                raise ReadOnlyMapping(step)
 
         final_step = self.variable._access_path_[-1]
 
