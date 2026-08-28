@@ -1,4 +1,14 @@
+from semantic_digital_twin.robots.minimal_robot import MinimalRobot
 from semantic_digital_twin.robots.xarm5 import XArm5
+
+
+def test_xacro_mappings_can_be_overridden_by_robot_class():
+    assert MinimalRobot.get_xacro_mappings() == {}
+    assert XArm5.get_xacro_mappings() == {
+        "robot_type": "xarm",
+        "dof": "5",
+        "robot_sn": "XF1305122503B6",
+    }
 
 
 def test_xarm5_loads_from_workspace_description(xarm5_world):

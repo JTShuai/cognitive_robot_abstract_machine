@@ -579,6 +579,13 @@ class AbstractRobot(Agent, HasRobotParts, ABC):
         """
 
     @classmethod
+    def get_xacro_mappings(cls) -> dict[str, str]:
+        """
+        Returns the substitution arguments used to expand the robot's xacro file.
+        """
+        return {}
+
+    @classmethod
     @abstractmethod
     def _get_root_body_name(cls) -> str:
         """

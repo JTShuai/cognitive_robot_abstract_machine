@@ -2,9 +2,7 @@
 Semantic annotation for the UFACTORY xArm 5.
 
 A table-mounted 5-DoF serial arm with a bare end-effector flange and a placeholder
-camera. Mirrors the structure of the other robots in this package (see ``pr2.py`` /
-``stretch.py``): each part is a leaf-first class implementing the three abstract
-methods, and the robot class ties them together.
+camera. 
 
 .. note:: The robot description comes from the ``xarm_description`` package of the
    official ``xarm_ros2`` repository, which the workspace setup
@@ -21,7 +19,7 @@ import os
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
-from typing import Dict, List, Self
+from typing import List, Self
 
 from semantic_digital_twin.collision_checking.collision_rules import (
     AvoidExternalCollisions,
@@ -145,12 +143,21 @@ class XArm5(AbstractRobot, HasOneArm[XArm5Arm], HasSensors[XArm5Camera]):
         return "package://xarm_description/urdf/xarm_device.urdf.xacro"
 
     @classmethod
-    def get_xacro_mappings(cls) -> Dict[str, str]:
+    def get_xacro_mappings(cls) -> dict[str, str]:
         """
         Return the xacro substitution arguments that select the xArm 5 from the
         parameterized device description (its defaults describe the 7-DoF model).
+
+        The serial number selects the ``xarm5_1305`` hardware variant: the device
+        xacro parses ``robot_sn`` into ``model_num`` and picks the ``xarm5_1305``
+        mesh folder when ``model_num >= 1305``. This keeps the default ``.stl``
+        visual meshes (the folder ships both ``.stl`` and ``.dae``) while still
+        pulling in the dedicated ``.obj`` collision meshes that this variant adds.
+        The link and joint topology is identical to the plain xArm 5, so the
+        self-collision matrix in ``resources/collision_configs/xarm5.srdf`` applies
+        unchanged.
         """
-        return {"robot_type": "xarm", "dof": "5"}
+        return {"robot_type": "xarm", "dof": "5", "robot_sn": "XF1305122503B6"}
 
     @classmethod
     def _get_root_body_name(cls) -> str:
