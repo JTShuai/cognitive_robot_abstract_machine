@@ -41,6 +41,7 @@ dev = [
     "docopt-ng",
     "bokeh",
     "mypy>=1.8",
+    "docformatter",
 ]
 
 doc = [

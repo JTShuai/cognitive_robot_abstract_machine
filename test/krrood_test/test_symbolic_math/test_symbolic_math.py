@@ -8,11 +8,14 @@ import scipy
 import scipy.sparse as sp
 
 import krrood.symbolic_math.symbolic_math as sm
+from krrood.adapters.json_serializer import from_json, to_json
 from krrood.symbolic_math.exceptions import (
+    FloatVariableAlreadyHasResolveError,
     HasFreeVariablesError,
     NotColumnVectorError,
     NotEnoughArgumentsError,
     NotSquareMatrixError,
+    SymbolicMathNotJsonSerializableError,
 )
 from krrood.symbolic_math.symbolic_math import VariableParameters
 from .reference_implementations import (
@@ -172,6 +175,52 @@ class TestTrinaryPredicates:
     """
     The predicate that holds for each trinary truth value.
     """
+
+    def test_or3_accepts_a_constant_comparison_result(self):
+        constant_comparison = sm.Scalar(0) <= 0.05
+        assert isinstance(constant_comparison, sm.Scalar)
+        result = sm.trinary_logic_or(sm.Scalar(0), constant_comparison)
+        assert isinstance(result, sm.Scalar)
+        assert bool(result) is True
+
+    def test_and3_accepts_a_constant_comparison_result(self):
+        constant_comparison = sm.Scalar(0) <= 0.05
+        assert isinstance(constant_comparison, sm.Scalar)
+        result = sm.trinary_logic_and(sm.Scalar(1), constant_comparison)
+        assert isinstance(result, sm.Scalar)
+        assert bool(result) is True
+
+    def test_predicate_return_types_are_primitive_bool(self):
+        """
+        Verify that is_const_true, is_const_false, and is_const_unknown return primitive
+        bool values rather than Scalar expressions.
+        """
+        s_true = sm.Scalar(0) <= 0.05
+        s_false = sm.Scalar(1) <= 0.05
+        s_unknown = sm.Scalar(0.5)
+
+        assert isinstance(s_true.is_constant_true(), bool)
+        assert s_true.is_constant_true() is True
+        assert isinstance(s_true.is_constant_false(), bool)
+        assert s_true.is_constant_false() is False
+
+        assert isinstance(s_false.is_constant_true(), bool)
+        assert s_false.is_constant_true() is False
+        assert isinstance(s_false.is_constant_false(), bool)
+        assert s_false.is_constant_false() is True
+
+        assert isinstance(s_unknown.is_constant_unknown(), bool)
+        assert s_unknown.is_constant_unknown() is True
+        assert isinstance(s_true.is_constant_unknown(), bool)
+        assert s_true.is_constant_unknown() is False
+
+        v = sm.FloatVariable(name="v")
+        assert isinstance(v.is_constant_true(), bool)
+        assert v.is_constant_true() is False
+        assert isinstance(v.is_constant_false(), bool)
+        assert v.is_constant_false() is False
+        assert isinstance(v.is_constant_unknown(), bool)
+        assert v.is_constant_unknown() is False
 
     def test_each_predicate_holds_only_for_its_own_value(self):
         for value in self.predicate_of_value:
@@ -908,6 +957,7 @@ class TestScalar:
             operator.lt,
             operator.le,
             operator.eq,
+            operator.ne,
             operator.ge,
             operator.gt,
         ]
@@ -918,8 +968,8 @@ class TestScalar:
         for f in operators:
             r_np = f(f1, f2)
             r_cas = f(e1_cas, e2_cas)
-            assert isinstance(r_cas, bool), f"{f.__name__} result is not Scalar"
-            assert r_np == r_cas, f"{f.__name__} result is wrong"
+            assert isinstance(r_cas, sm.Scalar), f"{f.__name__} result is not Scalar"
+            assert bool(r_cas) == r_np, f"{f.__name__} result is wrong"
 
     def test_comparisons_with_variable(self):
         operators = [
@@ -1583,3 +1633,56 @@ class TestMatrix:
         assert isinstance(m[2, :], sm.Vector)
         assert np.allclose(m[:2, :2], np.eye(2))
         assert isinstance(m[:2, :2], sm.Matrix)
+
+
+# %% JSON serialization
+
+
+class TestJsonSerialization:
+    """
+    A symbolic math value reaches JSON only as numbers: a constant round-trips, a value
+    that depends on variables is refused.
+    """
+
+    def test_variable_is_not_json_serializable(self):
+        variable = sm.FloatVariable("x")
+
+        with pytest.raises(SymbolicMathNotJsonSerializableError) as error:
+            to_json(variable)
+
+        assert error.value.expression is variable
+
+    def test_expression_with_a_variable_is_not_json_serializable(self):
+        expression = sm.FloatVariable("x") + 1
+
+        with pytest.raises(SymbolicMathNotJsonSerializableError) as error:
+            to_json(expression)
+
+        assert error.value.expression is expression
+
+    @pytest.mark.parametrize(
+        "constant",
+        [
+            sm.Scalar(1.5),
+            sm.Vector([1, 2]),
+            sm.Matrix([[1, 2], [3, 4]]),
+            sm.Matrix([[1, 2]]),
+        ],
+        ids=["scalar", "vector", "matrix", "row matrix"],
+    )
+    def test_constant_round_trips(self, constant: sm.SymbolicMathType):
+        constant_copy = from_json(to_json(constant))
+
+        assert type(constant_copy) is type(constant)
+        assert constant_copy.shape == constant.shape
+        assert np.array_equal(constant_copy.to_np(), constant.to_np())
+
+    def test_error_holding_a_variable_is_not_json_serializable(self):
+        """
+        An error is serialized field by field, so a variable it holds is refused rather
+        than serialized without end.
+        """
+        variable = sm.FloatVariable("x")
+
+        with pytest.raises(SymbolicMathNotJsonSerializableError):
+            to_json(FloatVariableAlreadyHasResolveError(variable=variable))

@@ -195,26 +195,23 @@ class AvoidExternalCollisions(AvoidCollisionRule, SubclassJSONSerializer):
             for body_a, body_b in product(body_subset, external_bodies)
         }
 
-    def to_json(self) -> Dict[str, Any]:
+    def to_json(self, **kwargs) -> Dict[str, Any]:
         return {
-            **super().to_json(),
-            "robot": to_json(self.robot.id),
+            **super().to_json(**kwargs),
+            "robot": to_json(self.robot.id, **kwargs),
             "body_subset": to_json(
-                {b.id for b in self.body_subset} if self.body_subset else None
+                {b.id for b in self.body_subset} if self.body_subset else None, **kwargs
             ),
         }
 
     @classmethod
     def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
         tracker = WorldEntityWithIDKwargsTracker.from_kwargs(kwargs)
-        robot = tracker.get_world_entity_with_id(id=from_json(data["robot"], **kwargs))
+        robot = tracker.get(from_json(data["robot"], **kwargs))
         body_subset_ids = from_json(data["body_subset"], **kwargs)
         body_subset = None
         if body_subset_ids is not None:
-            body_subset = {
-                tracker.get_world_entity_with_id(id=body_id)
-                for body_id in body_subset_ids
-            }
+            body_subset = {tracker.get(body_id) for body_id in body_subset_ids}
         return cls(robot=robot, body_subset=body_subset)
 
     def __eq__(self, other):
@@ -719,22 +716,20 @@ class SelfCollisionMatrixRule(AllowCollisionRule, SubclassJSONSerializer):
             )
         return self
 
-    def to_json(self) -> Dict[str, Any]:
+    def to_json(self, **kwargs) -> Dict[str, Any]:
         return {
-            **super().to_json(),
+            **super().to_json(**kwargs),
             "allowed_body_ids": to_json(
-                {body.id for body in self.allowed_collision_bodies}
+                {body.id for body in self.allowed_collision_bodies}, **kwargs
             ),
-            "allowed_collision_pairs": to_json(self.allowed_collision_pairs),
+            "allowed_collision_pairs": to_json(self.allowed_collision_pairs, **kwargs),
         }
 
     @classmethod
     def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
         tracker = WorldEntityWithIDKwargsTracker.from_kwargs(kwargs)
         allowed_body_ids = from_json(data["allowed_body_ids"], **kwargs)
-        allowed_bodies = {
-            tracker.get_world_entity_with_id(id=_id) for _id in allowed_body_ids
-        }
+        allowed_bodies = {tracker.get(_id) for _id in allowed_body_ids}
         self = cls()
         self.allowed_collision_bodies = allowed_bodies
         self.allowed_collision_pairs = set(
