@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "source": {
+    "id": "unidomain-unified",
+    "name": "UniDomain unified atomic-domain dataset",
+    "provenance": "huggingface_dataset",
+    "repository": "SII-PrimoButterfly/UniDomain-Data",
+    "revision": "aae4ddc8d3beef8a9f1d049f444e77d141fea139",
+    "license": "MIT (UniDomain repository, (c) 2025 RoboticSJTU)",
+    "archive": {
+      "source_url": "https://huggingface.co/datasets/SII-PrimoButterfly/UniDomain-Data/resolve/aae4ddc8d3beef8a9f1d049f444e77d141fea139/unified_domain/unified_domain.tar.gz",
+      "sha256": "52ed470a3f0910f4425a3d3425ee67225771eac54682a3db163840096329cbe5"
+    }
+  },
+  "release": {
+    "version": "r1",
+    "fragments_sha256": "a103036da8e77fe90a9a997a900ad48aa6e57d4e89f2bbd08f65db38bbc19179"
+  }
+}

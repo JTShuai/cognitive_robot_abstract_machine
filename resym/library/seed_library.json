@@ -1,0 +1,552 @@
+{
+  "__json_type__": "resym.core.symbols.SymbolLibrary",
+  "predicates": [
+    {
+      "__json_type__": "resym.core.symbols.PredicateSymbol",
+      "name": "handle-of",
+      "parameter_types": [
+        {
+          "__json_type__": "resym.core.types.SymbolType",
+          "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations:Handle"
+        },
+        {
+          "__json_type__": "resym.core.types.SymbolType",
+          "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations:Drawer"
+        }
+      ],
+      "evaluator": "handle_of",
+      "fluent": false,
+      "provenance": {
+        "__json_type__": "resym.core.provenance.Provenance",
+        "source": "seed",
+        "capability_request": null,
+        "proposal_backend": null,
+        "model": null,
+        "retrieved_ids": [],
+        "knowledge_source": null,
+        "test_suite_version": null,
+        "admitted_at": null
+      },
+      "uid": "resym:predicate/handle-of",
+      "version": "1",
+      "truth_procedure_ref": {
+        "__json_type__": "resym.core.predicate_refs.TruthProcedureRef",
+        "uid": "resym:truth-procedure/registry/handle_of",
+        "version": "1"
+      }
+    },
+    {
+      "__json_type__": "resym.core.symbols.PredicateSymbol",
+      "name": "closed",
+      "parameter_types": [
+        {
+          "__json_type__": "resym.core.types.SymbolType",
+          "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations:Drawer"
+        }
+      ],
+      "evaluator": "drawer_closed",
+      "fluent": true,
+      "provenance": {
+        "__json_type__": "resym.core.provenance.Provenance",
+        "source": "seed",
+        "capability_request": null,
+        "proposal_backend": null,
+        "model": null,
+        "retrieved_ids": [],
+        "knowledge_source": null,
+        "test_suite_version": null,
+        "admitted_at": null
+      },
+      "uid": "resym:predicate/closed",
+      "version": "1",
+      "truth_procedure_ref": {
+        "__json_type__": "resym.core.predicate_refs.TruthProcedureRef",
+        "uid": "resym:truth-procedure/registry/drawer_closed",
+        "version": "1"
+      }
+    },
+    {
+      "__json_type__": "resym.core.symbols.PredicateSymbol",
+      "name": "opened",
+      "parameter_types": [
+        {
+          "__json_type__": "resym.core.types.SymbolType",
+          "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations:Drawer"
+        }
+      ],
+      "evaluator": "drawer_opened",
+      "fluent": true,
+      "provenance": {
+        "__json_type__": "resym.core.provenance.Provenance",
+        "source": "seed",
+        "capability_request": null,
+        "proposal_backend": null,
+        "model": null,
+        "retrieved_ids": [],
+        "knowledge_source": null,
+        "test_suite_version": null,
+        "admitted_at": null
+      },
+      "uid": "resym:predicate/opened",
+      "version": "1",
+      "truth_procedure_ref": {
+        "__json_type__": "resym.core.predicate_refs.TruthProcedureRef",
+        "uid": "resym:truth-procedure/registry/drawer_opened",
+        "version": "1"
+      }
+    },
+    {
+      "__json_type__": "resym.core.symbols.PredicateSymbol",
+      "name": "ready-to-open",
+      "parameter_types": [
+        {
+          "__json_type__": "resym.core.types.SymbolType",
+          "python_type_ref": "semantic_digital_twin.robots.robot_parts:AbstractRobot"
+        },
+        {
+          "__json_type__": "resym.core.types.SymbolType",
+          "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations:Drawer"
+        }
+      ],
+      "evaluator": "ready_to_open",
+      "fluent": true,
+      "provenance": {
+        "__json_type__": "resym.core.provenance.Provenance",
+        "source": "seed",
+        "capability_request": null,
+        "proposal_backend": null,
+        "model": null,
+        "retrieved_ids": [],
+        "knowledge_source": null,
+        "test_suite_version": null,
+        "admitted_at": null
+      },
+      "uid": "resym:predicate/ready-to-open",
+      "version": "1",
+      "truth_procedure_ref": {
+        "__json_type__": "resym.core.predicate_refs.TruthProcedureRef",
+        "uid": "resym:truth-procedure/registry/ready_to_open",
+        "version": "1"
+      }
+    },
+    {
+      "__json_type__": "resym.core.symbols.PredicateSymbol",
+      "name": "openable",
+      "parameter_types": [
+        {
+          "__json_type__": "resym.core.types.SymbolType",
+          "python_type_ref": "semantic_digital_twin.robots.robot_parts:AbstractRobot"
+        },
+        {
+          "__json_type__": "resym.core.types.SymbolType",
+          "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations:Drawer"
+        }
+      ],
+      "evaluator": "openable",
+      "fluent": false,
+      "provenance": {
+        "__json_type__": "resym.core.provenance.Provenance",
+        "source": "seed",
+        "capability_request": null,
+        "proposal_backend": null,
+        "model": null,
+        "retrieved_ids": [],
+        "knowledge_source": null,
+        "test_suite_version": null,
+        "admitted_at": null
+      },
+      "uid": "resym:predicate/openable",
+      "version": "1",
+      "truth_procedure_ref": {
+        "__json_type__": "resym.core.predicate_refs.TruthProcedureRef",
+        "uid": "resym:truth-procedure/registry/openable",
+        "version": "1"
+      }
+    }
+  ],
+  "operators": [
+    {
+      "__json_type__": "resym.core.symbols.Operator",
+      "name": "navigate",
+      "parameters": [
+        [
+          "r",
+          {
+            "__json_type__": "resym.core.types.SymbolType",
+            "python_type_ref": "semantic_digital_twin.robots.robot_parts:AbstractRobot"
+          }
+        ],
+        [
+          "d",
+          {
+            "__json_type__": "resym.core.types.SymbolType",
+            "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations:Drawer"
+          }
+        ]
+      ],
+      "preconditions": [
+        {
+          "__json_type__": "resym.core.symbols.Literal",
+          "predicate": "openable",
+          "arguments": [
+            "r",
+            "d"
+          ],
+          "negated": false
+        }
+      ],
+      "add_effects": [
+        {
+          "__json_type__": "resym.core.symbols.Literal",
+          "predicate": "ready-to-open",
+          "arguments": [
+            "r",
+            "d"
+          ],
+          "negated": false
+        }
+      ],
+      "delete_effects": [],
+      "execution_binding": {
+        "__json_type__": "resym.core.capabilities.OperatorExecutionBinding",
+        "capability_ref": {
+          "__json_type__": "resym.core.capabilities.CapabilityRef",
+          "uid": "resym:ReachArticulationInteraction",
+          "version": "1"
+        },
+        "role_bindings": [
+          [
+            "actor",
+            {
+              "__json_type__": "resym.core.capabilities.RoleBinding",
+              "source": {
+                "__json_type__": "resym.core.capabilities.BindingSource",
+                "name": "PARAMETER"
+              },
+              "value": "r"
+            }
+          ],
+          [
+            "patient",
+            {
+              "__json_type__": "resym.core.capabilities.RoleBinding",
+              "source": {
+                "__json_type__": "resym.core.capabilities.BindingSource",
+                "name": "PARAMETER"
+              },
+              "value": "d"
+            }
+          ]
+        ],
+        "proposal_source": "seed"
+      },
+      "provenance": {
+        "__json_type__": "resym.core.provenance.Provenance",
+        "source": "seed",
+        "capability_request": null,
+        "proposal_backend": null,
+        "model": null,
+        "retrieved_ids": [],
+        "knowledge_source": null,
+        "test_suite_version": null,
+        "admitted_at": null
+      }
+    },
+    {
+      "__json_type__": "resym.core.symbols.Operator",
+      "name": "open-drawer",
+      "parameters": [
+        [
+          "r",
+          {
+            "__json_type__": "resym.core.types.SymbolType",
+            "python_type_ref": "semantic_digital_twin.robots.robot_parts:AbstractRobot"
+          }
+        ],
+        [
+          "h",
+          {
+            "__json_type__": "resym.core.types.SymbolType",
+            "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations:Handle"
+          }
+        ],
+        [
+          "d",
+          {
+            "__json_type__": "resym.core.types.SymbolType",
+            "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations:Drawer"
+          }
+        ]
+      ],
+      "preconditions": [
+        {
+          "__json_type__": "resym.core.symbols.Literal",
+          "predicate": "ready-to-open",
+          "arguments": [
+            "r",
+            "d"
+          ],
+          "negated": false
+        },
+        {
+          "__json_type__": "resym.core.symbols.Literal",
+          "predicate": "handle-of",
+          "arguments": [
+            "h",
+            "d"
+          ],
+          "negated": false
+        },
+        {
+          "__json_type__": "resym.core.symbols.Literal",
+          "predicate": "closed",
+          "arguments": [
+            "d"
+          ],
+          "negated": false
+        }
+      ],
+      "add_effects": [
+        {
+          "__json_type__": "resym.core.symbols.Literal",
+          "predicate": "opened",
+          "arguments": [
+            "d"
+          ],
+          "negated": false
+        }
+      ],
+      "delete_effects": [
+        {
+          "__json_type__": "resym.core.symbols.Literal",
+          "predicate": "closed",
+          "arguments": [
+            "d"
+          ],
+          "negated": false
+        }
+      ],
+      "execution_binding": {
+        "__json_type__": "resym.core.capabilities.OperatorExecutionBinding",
+        "capability_ref": {
+          "__json_type__": "resym.core.capabilities.CapabilityRef",
+          "uid": "resym:ArticulationStateChange",
+          "version": "1"
+        },
+        "role_bindings": [
+          [
+            "actor",
+            {
+              "__json_type__": "resym.core.capabilities.RoleBinding",
+              "source": {
+                "__json_type__": "resym.core.capabilities.BindingSource",
+                "name": "PARAMETER"
+              },
+              "value": "r"
+            }
+          ],
+          [
+            "patient",
+            {
+              "__json_type__": "resym.core.capabilities.RoleBinding",
+              "source": {
+                "__json_type__": "resym.core.capabilities.BindingSource",
+                "name": "PARAMETER"
+              },
+              "value": "d"
+            }
+          ],
+          [
+            "interaction_point",
+            {
+              "__json_type__": "resym.core.capabilities.RoleBinding",
+              "source": {
+                "__json_type__": "resym.core.capabilities.BindingSource",
+                "name": "PARAMETER"
+              },
+              "value": "h"
+            }
+          ],
+          [
+            "target_state",
+            {
+              "__json_type__": "resym.core.capabilities.RoleBinding",
+              "source": {
+                "__json_type__": "resym.core.capabilities.BindingSource",
+                "name": "CONSTANT"
+              },
+              "value": "OPEN"
+            }
+          ]
+        ],
+        "proposal_source": "seed"
+      },
+      "provenance": {
+        "__json_type__": "resym.core.provenance.Provenance",
+        "source": "seed",
+        "capability_request": null,
+        "proposal_backend": null,
+        "model": null,
+        "retrieved_ids": [],
+        "knowledge_source": null,
+        "test_suite_version": null,
+        "admitted_at": null
+      }
+    }
+  ],
+  "capability_contracts": [
+    {
+      "__json_type__": "resym.core.capabilities.CapabilityContract",
+      "uid": "resym:ReachArticulationInteraction",
+      "label": "navigation.reach-articulation-interaction",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capabilities.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations:Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capabilities.CapabilityRole",
+          "name": "patient",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.mixins:HasMechanicalJoint"
+            }
+          ]
+        }
+      ],
+      "success_relation": "ready_to_open(actor, patient)",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/ready-to-open",
+          "version": "1",
+          "local_name": "ready-to-open"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#Navigating",
+        "source_version": "soma@2.1.0",
+        "decided_by": "llm-agent",
+        "decision_model": "codex",
+        "rationale": "The local capability is narrower than SOMA Navigating: it moves the robot to a witness pose from which it can interact with one articulated object.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#Navigating"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": []
+    },
+    {
+      "__json_type__": "resym.core.capabilities.CapabilityContract",
+      "uid": "resym:ArticulationStateChange",
+      "label": "articulation.state-transition",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capabilities.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations:Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capabilities.CapabilityRole",
+          "name": "patient",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.mixins:HasMechanicalJoint"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capabilities.CapabilityRole",
+          "name": "interaction_point",
+          "required": false,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations:Handle"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capabilities.CapabilityRole",
+          "name": "target_state",
+          "required": true,
+          "allowed_values": [
+            "OPEN",
+            "CLOSED"
+          ],
+          "accepted_symbol_types": []
+        }
+      ],
+      "success_relation": "articulation_state(patient) == target_state",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/opened",
+          "version": "1",
+          "local_name": "opened"
+        },
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/closed",
+          "version": "1",
+          "local_name": "closed"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#StateTransition",
+        "source_version": "soma@2.1.0",
+        "decided_by": "llm-agent",
+        "decision_model": "codex",
+        "rationale": "The local capability is a state transition restricted to an articulated patient and the OPEN/CLOSED target states; SOMA Opening and Closing support the target-specific readings.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#StateTransition",
+          "http://www.ease-crc.org/ont/SOMA.owl#Opening",
+          "http://www.ease-crc.org/ont/SOMA.owl#Closing"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": [
+        [
+          "opened",
+          "target_state",
+          "OPEN"
+        ],
+        [
+          "closed",
+          "target_state",
+          "CLOSED"
+        ]
+      ]
+    }
+  ]
+}

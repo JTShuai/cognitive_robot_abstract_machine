@@ -1,0 +1,16 @@
+.git
+.venv
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/*.egg-info
+**/.env
+**/.env.*
+resym/runs
+resym/vendor
+resym/config/llm.json
+resym/ontology/*
+!resym/ontology/.gitignore
+tmp

@@ -15,12 +15,16 @@ dependencies = [
     "krrood",
     "probabilistic_model",
     "random_events",
+    "resym",
     "semantic_digital_twin",
 ]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 include-package-data = true
+
+[tool.setuptools.package-data]
+"experiments.resym" = ["rviz/*.rviz"]
 
 [tool.setuptools.dynamic]
 version = {attr = "experiments._version.__version__"}
@@ -31,5 +35,6 @@ workspace = [
     "giskardpy",
     "krrood",
     "random_events",
+    "resym",
     "semantic_digital_twin",
 ]

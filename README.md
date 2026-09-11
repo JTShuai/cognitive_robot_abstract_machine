@@ -2,6 +2,10 @@
 
 Monorepo for the CRAM cognitive architecture. 
 
+The [`resym`](resym/) workspace member adds task-level symbolic model retrieval,
+reuse, adaptation, validation, and lifecycle management on top of CRAM's Semantic
+Digital Twin, krrood/EQL, and Coraplex execution stack.
+
 ## Installation
 
 ### Clone the repo and its submodules

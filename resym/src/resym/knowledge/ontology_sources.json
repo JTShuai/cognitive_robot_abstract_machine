@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "id": "soma",
+      "name": "Socio-physical Model of Activities",
+      "provenance": "official_project_release",
+      "release": "2.1.0",
+      "license": "LGPL-3.0",
+      "files": [
+        {
+          "path": "soma/2.1.0/SOMA.owl",
+          "source_url": "https://ease-crc.github.io/soma/owl/2.1.0/SOMA.owl",
+          "sha256": "908a9a999c82d5073bc16b8b516d0e42c7d900c7cfa7626f4572f5c8931b690f"
+        },
+        {
+          "path": "soma/2.1.0/SOMA-HOME.owl",
+          "source_url": "https://ease-crc.github.io/soma/owl/2.1.0/SOMA-HOME.owl",
+          "sha256": "1688018dfa0e2cfadaa92d81e85db7ce35c719125dc1fcaa26316cac454aa696"
+        },
+        {
+          "path": "soma/2.1.0/DUL.owl",
+          "source_url": "https://ease-crc.github.io/soma/owl/2.1.0/DUL.owl",
+          "sha256": "2a87b88dd8404a018d8b12d0ccea7cf9c4d152ebb99bf979dc5bf733a5c2236a"
+        }
+      ]
+    },
+    {
+      "id": "ieee1872-owl",
+      "name": "OWL implementation of IEEE 1872-2015 ontologies",
+      "provenance": "community_owl_implementation",
+      "git_commit": "ffb6613350b28c3a710f8daf2a1e9e953ded7ed8",
+      "license": "CC-BY-4.0",
+      "files": [
+        {
+          "path": "ieee1872-owl/annotation.owl",
+          "source_url": "https://raw.githubusercontent.com/srfiorini/IEEE1872-owl/ffb6613350b28c3a710f8daf2a1e9e953ded7ed8/annotation.owl",
+          "sha256": "57b742f7907c439bc1fa7272d7b6ecf77af415034cdf2d77640336e0f37f6a66"
+        },
+        {
+          "path": "ieee1872-owl/cora-bare.owl",
+          "source_url": "https://raw.githubusercontent.com/srfiorini/IEEE1872-owl/ffb6613350b28c3a710f8daf2a1e9e953ded7ed8/cora-bare.owl",
+          "sha256": "5e6a01d3a98b414aad9051264d38bda57941f26a10744bb69544422867f5c87a"
+        },
+        {
+          "path": "ieee1872-owl/cora-fullaxiom.owl",
+          "source_url": "https://raw.githubusercontent.com/srfiorini/IEEE1872-owl/ffb6613350b28c3a710f8daf2a1e9e953ded7ed8/cora-fullaxiom.owl",
+          "sha256": "111cb54e382084d27cb1919588a9188bc4842c325e11ab9e91b246ff63ab8d08"
+        },
+        {
+          "path": "ieee1872-owl/cora.owl",
+          "source_url": "https://raw.githubusercontent.com/srfiorini/IEEE1872-owl/ffb6613350b28c3a710f8daf2a1e9e953ded7ed8/cora.owl",
+          "sha256": "1efb94c11daa64bbbfeb3c02dd1dc9872a15c44b05138b7a0db9d6be289fbd83"
+        },
+        {
+          "path": "ieee1872-owl/corax.owl",
+          "source_url": "https://raw.githubusercontent.com/srfiorini/IEEE1872-owl/ffb6613350b28c3a710f8daf2a1e9e953ded7ed8/corax.owl",
+          "sha256": "495ee0911147547f9e4cd1f41eff0a42bfb813bca207f3502f474a5fb5a477f9"
+        },
+        {
+          "path": "ieee1872-owl/pos.owl",
+          "source_url": "https://raw.githubusercontent.com/srfiorini/IEEE1872-owl/ffb6613350b28c3a710f8daf2a1e9e953ded7ed8/pos.owl",
+          "sha256": "6667705d0587a903abe7f229c961ad75cdeb0254cfd3608e8fb05d9b59682f46"
+        },
+        {
+          "path": "ieee1872-owl/rparts.owl",
+          "source_url": "https://raw.githubusercontent.com/srfiorini/IEEE1872-owl/ffb6613350b28c3a710f8daf2a1e9e953ded7ed8/rparts.owl",
+          "sha256": "188dc4ffc9cd974f0c170e062ee46ebb72b030848d6706c6a1d126efc662b7a3"
+        },
+        {
+          "path": "ieee1872-owl/sumo-cora.owl",
+          "source_url": "https://raw.githubusercontent.com/srfiorini/IEEE1872-owl/ffb6613350b28c3a710f8daf2a1e9e953ded7ed8/sumo-cora.owl",
+          "sha256": "3bff7f4180fa87bb559622cba57afe8291b9fbe40f0cb42bd3e8f02327f51209"
+        }
+      ]
+    }
+  ]
+}

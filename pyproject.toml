@@ -24,6 +24,7 @@ dependencies = [
   "physics_simulators",
   "experiments",
   "segmind",
+  "resym",
   "ipykernel>=7.2.0",
   "lark-parser>=0.12.0",
   "tqdm"
@@ -37,6 +38,7 @@ dev = [
     "pytest-rerunfailures",
     "objgraph",
     "treon",
+    "docopt-ng",
     "bokeh",
     "mypy>=1.8",
 ]
@@ -63,16 +65,14 @@ doc = [
     "ortools",
     "cvxopt",
     "treon",
+    "docopt-ng",
     "jupytext",
 ]
 
 [tool.uv]
-# make treon require docopt-ng instead of the unmaintained docopt
-override-dependencies = [
-    { package = { name = "treon" }, dependencies = ["docopt-ng"] },
-]
+# Use docopt-ng instead of treon's unmaintained docopt dependency.
 exclude-dependencies = [
-    { package = { name = "treon" }, dependencies = ["docopt"] },
+    "docopt",
     "pathlib",
 ]
 
@@ -87,7 +87,8 @@ members = [
   "physics_simulators",
   "robokudo",
   "experiments",
-  "segmind"
+  "segmind",
+  "resym"
 ]
 
 [tool.uv.sources]
@@ -101,6 +102,8 @@ robokudo              = { workspace = true }
 physics_simulators    = { workspace = true }
 segmind               = { workspace = true }
 experiments           = { workspace = true }
+resym                 = { workspace = true }
+llm-agent-kit         = { git = "https://github.com/JTShuai/llm-agent-kit" }
 
 [tool.poetry]
 package-mode = false
@@ -116,6 +119,7 @@ robokudo = { path = "robokudo", develop = true }
 physics_simulators = { path = "physics_simulators", develop = true }
 experiments = { path = "experiments", develop = true }
 segmind = { path = "segmind", develop = true }
+resym = { path = "resym", develop = true }
 
 [tool.setuptools]
 packages = ["cognitive_robot_abstract_machine"]

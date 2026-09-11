@@ -1,0 +1,16 @@
+{
+  "agent": {
+    "model": "deepseek-v4-flash",
+    "kwargs": {
+      "temperature": 0.0,
+      "max_tokens": 4096,
+      "response_format": {"type": "json_object"},
+      "extra_body": {"thinking": {"type": "disabled"}}
+    }
+  },
+  "tasks": {
+    "call_max_retries": 10,
+    "call_retry_delay": 15
+  },
+  "structured_maximum_attempts": 3
+}

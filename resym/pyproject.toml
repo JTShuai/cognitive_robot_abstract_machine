@@ -1,0 +1,59 @@
+[project]
+name = "resym"
+description = "Task-level symbolic model retrieval, reuse, adaptation, and lifecycle management for CRAM."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dynamic = ["version"]
+dependencies = [
+    "semantic_digital_twin",
+    "krrood",
+    "coraplex",
+    "giskardpy",
+    "typing_extensions",
+    "numpy",
+    "mujoco",
+    "xacro",
+    "pydantic",
+    "llm-agent-kit",
+]
+
+[project.scripts]
+resym-install-ontologies = "resym.knowledge.ontology_installation:main"
+resym-install-corpus = "resym.knowledge.corpus_installation:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "flask",
+]
+# Web log viewer
+viewer = [
+    "flask",
+]
+
+dense = [
+    "sentence-transformers",
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.dynamic]
+version = {attr = "resym._version.__version__"}
+
+[tool.setuptools.package-data]
+resym = [
+    "knowledge/ontology_sources.json",
+    "knowledge/corpus_source.json",
+    "llm/prompts/*.md",
+]
+
+[tool.pytest.ini_options]
+addopts = "-sv"
+testpaths = ["../test/resym_test"]

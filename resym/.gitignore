@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.egg-info/
+vendor/
+*.pddl
+sas_plan*
+.env
+# only the template is tracked; personal config/*.json (e.g. llm.json) stays local
+config/*.json
+!config/llm.example.json
+!config/experiment_protocol.json
+!config/tracy_frozen_splits.json
+.claude/
+# per-run structured logs (resym.observability.runlog)
+runs/
+# installed external data: ontology files + UniDomain corpus and its frozen release
+augment_dataset/*
+!augment_dataset/.gitignore

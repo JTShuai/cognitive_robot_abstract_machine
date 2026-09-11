@@ -9,6 +9,7 @@ PACKAGES = [
     "physics_simulators",
     "probabilistic_model",
     "random_events",
+    "resym",
     "robokudo",
     "semantic_digital_twin",
 ]

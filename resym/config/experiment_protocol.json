@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "status": "preregistered-before-next-e1-run",
+  "gate_p2": {
+    "repair_noninferiority_absolute_difference": 0.05,
+    "false_admission_maximum_absolute_increase": 0.01,
+    "confidence_level": 0.95,
+    "bootstrap_iterations": 10000,
+    "bootstrap_seed": 0
+  },
+  "split_policy": {
+    "requires_platform_feasibility_calibration": true,
+    "formal_runs_require_frozen_manifest": true
+  },
+  "repair_protocol": {
+    "agent_profile": "agentic-rag-v5",
+    "operator_update_mode": "partial-overlay-with-literal-and-parameter-type-edits",
+    "candidate_deduplication": "semantic-content",
+    "candidate_lifecycle": "propose-check-probe-submit",
+    "required_proposal_probes": ["task-positive", "capability-negative"],
+    "episode_budget": {"candidates": 3, "tool_calls": 24, "probes": 6},
+    "effect_diagnosis": "operator-binding-capability-contract",
+    "library_validation": "goal-relevant-before-grounding",
+    "unknown_evidence_scope": "grounded-causal-neighborhood",
+    "retrieval_no_match": "llm-prior-proposal-with-explicit-provenance",
+    "new_predicate_grounding": "bounded-typed-cram-query-dsl",
+    "missing_execution_capability": "structured-gap-report-only"
+  },
+  "provider_pricing": {
+    "provider": "DeepSeek",
+    "model": "deepseek-v4-flash",
+    "currency": "USD",
+    "unit": "per_million_tokens",
+    "input_cache_hit": 0.0028,
+    "input_cache_miss": 0.14,
+    "output": 0.28,
+    "retrieved_on": "2026-08-22",
+    "source": "https://api-docs.deepseek.com/quick_start/pricing/"
+  }
+}

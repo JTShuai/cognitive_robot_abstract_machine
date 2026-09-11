@@ -52,6 +52,14 @@ jobs:
           source /opt/ros/cram-env/bin/activate
           uv pip install drake
 
+      - name: Install resym runtime data and planner
+        if: ${{ inputs.lib == 'resym' || inputs.lib == 'experiments' }}
+        run: |
+          cd cognitive_robot_abstract_machine
+          source /opt/ros/cram-env/bin/activate
+          uv run --active --no-sync resym-install-ontologies
+          ./resym/scripts/install_fast_downward.sh
+
       - name: Restore cache
         uses: actions/cache/restore@v4
         with:
