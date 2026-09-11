@@ -31,7 +31,9 @@ from resym.repair.patch import ModelPatch
 from resym.core.model import (
     CapabilityContract,
     EvaluatorSpec,
+    GroundingFactorySpec,
     Operator,
+    PredicateSymbol,
     SymbolLibrary,
     SymbolType,
     contract_violations,
@@ -72,6 +74,13 @@ class Curator:
     Read-only platform contracts that an admitted binding may reference.
     """
 
+    grounding_factory_specs: Mapping[str, GroundingFactorySpec] = field(
+        default_factory=dict
+    )
+    """
+    Current reviewed grounding factories accepted by predicate plans.
+    """
+
     def static_review(self, patch: ModelPatch, library: SymbolLibrary) -> list[str]:
         """
         The full static checklist; also exposed to backends as their read-only
@@ -87,6 +96,7 @@ class Curator:
             self.evaluator_specs,
             self.allowed_symbol_types,
             self.capability_catalog,
+            self.grounding_factory_specs,
         )
 
     def review(
@@ -146,12 +156,14 @@ def static_objections(
     evaluator_specs: Mapping[str, EvaluatorSpec] | None = None,
     allowed_symbol_types: frozenset[SymbolType] = frozenset(),
     capability_catalog: tuple[CapabilityContract, ...] = (),
+    grounding_factory_specs: Mapping[str, GroundingFactorySpec] | None = None,
 ) -> list[str]:
     """
     Every static reason the patch may not be admitted; empty means clean.
     """
     objections: list[str] = []
     evaluator_specs = evaluator_specs or {}
+    grounding_factory_specs = grounding_factory_specs or {}
     catalog = set(library.symbol_types)
     catalog.update(allowed_symbol_types)
     catalog.update(
@@ -164,6 +176,11 @@ def static_objections(
         for contract in capability_catalog
         for role in contract.roles
         for symbol_type in role.accepted_symbol_types
+    )
+    catalog.update(
+        role.symbol_type
+        for specification in grounding_factory_specs.values()
+        for role in specification.roles
     )
     allowed_type_refs = frozenset(
         symbol_type.python_type_ref for symbol_type in catalog
@@ -192,28 +209,35 @@ def static_objections(
             subject, predicate.parameter_types, allowed_type_refs
         )
         objections.extend(type_objections)
-        implementation = predicate.implementation
-        if implementation.evaluator_key not in known_evaluators:
-            objections.append(
-                f"{subject}: unknown truth procedure "
-                f"'{implementation.evaluator_key}'"
-            )
-        elif implementation.evaluator_key in evaluator_specs and not invalid_types:
-            spec = evaluator_specs[implementation.evaluator_key]
-            compatible_signature = len(predicate.parameter_types) == len(
-                spec.parameter_types
-            ) and all(
-                is_symbol_subtype(declared, accepted)
-                for declared, accepted in zip(
-                    predicate.parameter_types, spec.parameter_types
+        if predicate.grounding_plan is not None:
+            objections.extend(
+                _grounding_plan_objections(
+                    predicate, grounding_factory_specs, invalid_types
                 )
             )
-            if not compatible_signature:
+        else:
+            implementation = predicate.implementation
+            if implementation.evaluator_key not in known_evaluators:
                 objections.append(
-                    f"{subject}: evaluator '{implementation.evaluator_key}' expects "
-                    f"{_types(spec.parameter_types)}, symbol declares "
-                    f"{_types(predicate.parameter_types)}"
+                    f"{subject}: unknown truth procedure "
+                    f"'{implementation.evaluator_key}'"
                 )
+            elif implementation.evaluator_key in evaluator_specs and not invalid_types:
+                spec = evaluator_specs[implementation.evaluator_key]
+                compatible_signature = len(predicate.parameter_types) == len(
+                    spec.parameter_types
+                ) and all(
+                    is_symbol_subtype(declared, accepted)
+                    for declared, accepted in zip(
+                        predicate.parameter_types, spec.parameter_types
+                    )
+                )
+                if not compatible_signature:
+                    objections.append(
+                        f"{subject}: evaluator '{implementation.evaluator_key}' expects "
+                        f"{_types(spec.parameter_types)}, symbol declares "
+                        f"{_types(predicate.parameter_types)}"
+                    )
         known_predicates[predicate.name] = predicate
 
     contracts = dict(library.capability_contracts)
@@ -245,6 +269,86 @@ def static_objections(
                 allowed_type_refs,
             )
         )
+    return objections
+
+
+def _grounding_plan_objections(
+    predicate: PredicateSymbol,
+    specifications: Mapping[str, GroundingFactorySpec],
+    invalid_types: bool,
+) -> list[str]:
+    """
+    Validate one predicate-to-factory plan without executing its query.
+    """
+    plan = predicate.grounding_plan
+    if plan is None:
+        return []
+    subject = f"predicate '{predicate.name}'"
+    specification = specifications.get(plan.factory_uid)
+    if specification is None:
+        return [f"{subject}: unknown grounding factory '{plan.factory_uid}'"]
+    objections: list[str] = []
+    if plan.approved_factory_checksum != specification.implementation_checksum:
+        objections.append(
+            f"{subject}: grounding factory checksum does not match the approved "
+            f"implementation of '{plan.factory_uid}'"
+        )
+    bindings = dict(plan.role_bindings)
+    if len(bindings) != len(plan.role_bindings):
+        objections.append(f"{subject}: grounding role is bound more than once")
+    expected_roles = {role.name for role in specification.roles}
+    if bindings and set(bindings) != expected_roles:
+        objections.append(
+            f"{subject}: grounding roles must be exactly {sorted(expected_roles)}"
+        )
+    if not bindings and len(predicate.parameter_types) != len(specification.roles):
+        objections.append(
+            f"{subject}: positional grounding expects {len(specification.roles)} "
+            f"arguments, symbol declares {len(predicate.parameter_types)}"
+        )
+    if not invalid_types:
+        for position, role in enumerate(specification.roles):
+            argument_index = bindings.get(role.name, position)
+            if argument_index < 0 or argument_index >= len(predicate.parameter_types):
+                objections.append(
+                    f"{subject}: role '{role.name}' maps to invalid argument "
+                    f"index {argument_index}"
+                )
+                continue
+            declared = predicate.parameter_types[argument_index]
+            if not is_symbol_subtype(declared, role.symbol_type):
+                objections.append(
+                    f"{subject}: role '{role.name}' expects "
+                    f"{role.symbol_type.python_type_ref}, symbol argument "
+                    f"{argument_index} declares {declared.python_type_ref}"
+                )
+    supplied_parameters = dict(plan.parameters)
+    if len(supplied_parameters) != len(plan.parameters):
+        objections.append(f"{subject}: grounding parameter is set more than once")
+    parameter_specs = {
+        parameter.name: parameter for parameter in specification.parameters
+    }
+    unknown_parameters = sorted(set(supplied_parameters) - set(parameter_specs))
+    if unknown_parameters:
+        objections.append(
+            f"{subject}: unknown grounding parameters {unknown_parameters}"
+        )
+    missing_parameters = sorted(
+        name
+        for name, parameter in parameter_specs.items()
+        if parameter.required and name not in supplied_parameters
+    )
+    if missing_parameters:
+        objections.append(
+            f"{subject}: missing required grounding parameters {missing_parameters}"
+        )
+    for name, value in supplied_parameters.items():
+        parameter = parameter_specs.get(name)
+        if parameter is not None and not parameter.accepts(value):
+            objections.append(
+                f"{subject}: grounding parameter '{name}' has an invalid "
+                f"value {value!r}"
+            )
     return objections
 
 

@@ -199,7 +199,9 @@ def solve_task(
             issues=[issue.render() for issue in model_issues],
         )
         raise InvalidSymbolLibraryError(model_issues, selection)
-    missing_evaluators = context.profile.missing_evaluators(selection)
+    missing_evaluators = context.profile.missing_evaluators(
+        selection, context.grounding_catalog
+    )
     missing_capabilities = context.profile.missing_capabilities(selection)
     if missing_capabilities:
         missing = missing_evaluators + missing_capabilities

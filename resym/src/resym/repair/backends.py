@@ -67,6 +67,7 @@ from resym.core.model import (
     is_symbol_subtype,
     resolve_symbol_type,
 )
+from resym.core.grounding import GroundingFactoryCandidate
 
 if TYPE_CHECKING:
     from resym.repair.certificate import FailureCertificate
@@ -230,11 +231,29 @@ class RepairTask:
     required_probes: tuple[str, ...] = ()
     """Proposal-split probes that must pass before agent submission."""
 
+    grounding_vocabulary_listing: str = ""
+    """Reviewed EQL symbols from which a Tier 2 candidate may be composed."""
+
+    grounding_factory_listing: str = ""
+    """Current approved factories that a predicate grounding plan may reference."""
+
+    validate_grounding_candidate: Optional[
+        Callable[[GroundingFactoryCandidate], tuple[str, ...]]
+    ] = None
+    """Static source boundary applied before a candidate enters review."""
+
+    grounding_candidate_sink: Optional[Callable[[GroundingFactoryCandidate], None]] = (
+        None
+    )
+    """Pending-review persistence supplied by the application."""
+
 
 class OutcomeStatus(Enum):
     PATCH_PROPOSED = "patch_proposed"
     NO_CANDIDATE = "no_candidate"
     MISSING_EXECUTION_CAPABILITY = "missing_execution_capability"
+    GROUNDING_FACTORY_PROPOSED = "grounding_factory_proposed"
+    MISSING_GROUNDING_CAPABILITY = "missing_grounding_capability"
     UNSUPPORTED_DECLARED = "unsupported_declared"
     BUDGET_EXHAUSTED = "budget_exhausted"
 
@@ -256,6 +275,23 @@ class MissingExecutionCapability:
     matching_contract_uids: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class MissingGroundingCapability:
+    """Structured relation that approved world-query mechanisms cannot compute."""
+
+    required_relation: str
+    """Task-level relation whose truth cannot be obtained."""
+
+    input_types: tuple[tuple[str, str], ...]
+    """Semantic input roles and their required CRAM types."""
+
+    missing_computation: str
+    """World-query or computational ability absent from the platform."""
+
+    reason: str
+    """Evidence supporting the reported gap."""
+
+
 @dataclass
 class RepairOutcome:
     """What one backend episode produced, with its full event log."""
@@ -264,6 +300,8 @@ class RepairOutcome:
     status: OutcomeStatus
     patch: Optional[ModelPatch] = None
     missing_execution_capability: Optional[MissingExecutionCapability] = None
+    missing_grounding_capability: Optional[MissingGroundingCapability] = None
+    grounding_factory_candidate: Optional[GroundingFactoryCandidate] = None
     retrieved_ids: tuple[str, ...] = ()
     events: list[dict] = field(default_factory=list)
     budget: dict = field(default_factory=dict)
@@ -328,7 +366,11 @@ def render_proposal_prompt(task: RepairTask, retrieved: str = "") -> str:
         predicates=render_predicates(task.library, mark_fluents=True),
         operators=render_operators(task.library),
         evaluators=task.evaluator_listing,
-        predicate_queries=task.evaluator_listing or "- none registered",
+        predicate_queries=(
+            task.grounding_factory_listing
+            or task.evaluator_listing
+            or "- none registered"
+        ),
         skills=task.capability_listing,
         capability_candidates=task.capability_draft_listing or "- none",
         types=", ".join(t.python_type_ref for t in task.library.symbol_types),

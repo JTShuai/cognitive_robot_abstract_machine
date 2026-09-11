@@ -13,6 +13,7 @@ import pytest
 
 from resym.repair.agent import RetrievalAugmentedPlanningAgent
 from resym.repair.agent_harness import AgentProfile
+from resym.platform.grounding_catalog import GroundingFactorySourceValidator
 from resym.repair.backends import (
     Budget,
     BudgetMeter,
@@ -33,6 +34,7 @@ from resym.core.model import (
 )
 from .capability_helpers import capability_contract
 from .library_fixtures import build_fixed_arm_library
+from .test_grounding_factory_catalog import DATASET, vocabulary
 
 from resym.core.model import SymbolType
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
@@ -324,6 +326,85 @@ def test_agent_reports_a_structured_missing_execution_capability():
     assert outcome.missing_execution_capability.gap_kind is (
         CapabilityGapKind.MISSING_CONTRACT
     )
+
+
+def test_agent_can_submit_a_bounded_eql_factory_candidate_for_human_review():
+    submitted = []
+    reviewed_vocabulary = vocabulary()
+    validator = GroundingFactorySourceValidator(reviewed_vocabulary)
+    task = task_with()
+    task.grounding_vocabulary_listing = reviewed_vocabulary.render()
+    task.validate_grounding_candidate = validator.candidate_objections
+    task.grounding_candidate_sink = submitted.append
+    agent, _ = agent_with(
+        action(
+            "propose_grounding_factory_candidate",
+            candidate_id="inside-region-candidate",
+            proposed_uid="resym:grounding/inside-region",
+            semantic_name="inside-region",
+            source_code=(DATASET / "valid_factory.py").read_text(),
+            roles=[{"name": "object", "symbol_type": ROBOT_TYPE.python_type_ref}],
+            rationale="No reviewed factory implements the required relation.",
+            evidence=["unidomain:inside"],
+        )
+    )
+
+    outcome = agent.repair(task, BudgetMeter())
+
+    assert outcome.status is OutcomeStatus.GROUNDING_FACTORY_PROPOSED
+    assert outcome.grounding_factory_candidate is submitted[0]
+    assert submitted[0].proposed_uid == "resym:grounding/inside-region"
+    assert submitted[0].generated_by == agent.name
+
+
+def test_candidate_roles_keep_their_declared_order():
+    """
+    Role order is positional semantics; it must never be re-sorted.
+    """
+    submitted = []
+    reviewed_vocabulary = vocabulary()
+    task = task_with()
+    task.validate_grounding_candidate = GroundingFactorySourceValidator(
+        reviewed_vocabulary
+    ).candidate_objections
+    task.grounding_candidate_sink = submitted.append
+    agent, _ = agent_with(
+        action(
+            "propose_grounding_factory_candidate",
+            candidate_id="ordered-roles-candidate",
+            proposed_uid="resym:grounding/ordered-roles",
+            semantic_name="ordered-roles",
+            source_code=(DATASET / "valid_factory.py").read_text(),
+            roles=[
+                {"name": "object", "symbol_type": OBJECT_TYPE.python_type_ref},
+                {"name": "container", "symbol_type": OBJECT_TYPE.python_type_ref},
+            ],
+            rationale="Role order must match the drafted evaluate body.",
+        )
+    )
+
+    outcome = agent.repair(task, BudgetMeter())
+
+    assert outcome.status is OutcomeStatus.GROUNDING_FACTORY_PROPOSED
+    assert tuple(role.name for role in submitted[0].roles) == ("object", "container")
+
+
+def test_agent_reports_a_structured_grounding_gap_when_eql_is_insufficient():
+    agent, _ = agent_with(
+        action(
+            "report_missing_grounding_capability",
+            required_relation="contains-liquid",
+            input_types={"container": OBJECT_TYPE.python_type_ref},
+            missing_computation="fluid state simulation",
+            reason="The reviewed EQL vocabulary has no fluid-state source.",
+        )
+    )
+
+    outcome = agent.repair(task_with(), BudgetMeter())
+
+    assert outcome.status is OutcomeStatus.MISSING_GROUNDING_CAPABILITY
+    assert outcome.missing_grounding_capability is not None
+    assert outcome.missing_grounding_capability.required_relation == "contains-liquid"
 
 
 def test_agent_can_search_the_complete_reviewed_capability_catalog():

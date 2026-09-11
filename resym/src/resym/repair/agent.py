@@ -32,8 +32,13 @@ from dataclasses import dataclass, field
 from typing_extensions import Optional
 
 from krrood.adapters.json_serializer import to_json
+from resym.core.grounding import (
+    GroundingFactoryCandidate,
+    GroundingFactoryParameter,
+    GroundingFactoryRole,
+)
 from resym.repair.patch import ModelPatch
-from resym.core.model import SymbolLibrary
+from resym.core.model import SymbolLibrary, SymbolType
 from resym.platform.capabilities import matching_capability_contracts
 from resym.core.provenance import KnowledgeSource
 from resym.repair.backends import (
@@ -42,6 +47,7 @@ from resym.repair.backends import (
     AGENTIC_RAG_BACKEND_NAME,
     CapabilityGapKind,
     MissingExecutionCapability,
+    MissingGroundingCapability,
     OutcomeStatus,
     RepairBackend,
     RepairOutcome,
@@ -73,9 +79,13 @@ from resym.repair.agent_harness import (
     EpisodeEventLog,
     FragmentArguments,
     GroundingCatalogResult,
+    GroundingFactoryCandidateArguments,
+    GroundingFactoryCandidateResult,
     LibraryResult,
     MissingExecutionCapabilityArguments,
     MissingExecutionCapabilityResult,
+    MissingGroundingCapabilityArguments,
+    MissingGroundingCapabilityResult,
     NoArguments,
     PatchCheckResult,
     PatchComparisonResult,
@@ -109,6 +119,8 @@ class EpisodeState:
     retrieved_ids: tuple[str, ...] = ()
     unsupported_reason: Optional[str] = None
     missing_execution_capability: Optional[MissingExecutionCapability] = None
+    missing_grounding_capability: Optional[MissingGroundingCapability] = None
+    grounding_factory_candidate: Optional[GroundingFactoryCandidate] = None
     submitted: bool = False
     candidate_checked: bool = False
     candidate_static_clean: bool = False
@@ -229,6 +241,20 @@ class RetrievalAugmentedPlanningAgent(RepairBackend):
                     )
                     termination_reason = "missing_execution_capability_reported"
                     break
+                if state.grounding_factory_candidate is not None:
+                    outcome.status = OutcomeStatus.GROUNDING_FACTORY_PROPOSED
+                    outcome.grounding_factory_candidate = (
+                        state.grounding_factory_candidate
+                    )
+                    termination_reason = "grounding_factory_candidate_proposed"
+                    break
+                if state.missing_grounding_capability is not None:
+                    outcome.status = OutcomeStatus.MISSING_GROUNDING_CAPABILITY
+                    outcome.missing_grounding_capability = (
+                        state.missing_grounding_capability
+                    )
+                    termination_reason = "missing_grounding_capability_reported"
+                    break
                 if state.unsupported_reason is not None:
                     outcome.status = OutcomeStatus.UNSUPPORTED_DECLARED
                     termination_reason = "unsupported_capability"
@@ -280,10 +306,18 @@ class RetrievalAugmentedPlanningAgent(RepairBackend):
         def inspect_grounding_catalog(
             arguments: NoArguments,
         ) -> GroundingCatalogResult:
-            primitives = task.evaluator_listing or "- none registered"
+            primitives = (
+                task.grounding_factory_listing
+                or task.evaluator_listing
+                or "- none registered"
+            )
+            vocabulary = task.grounding_vocabulary_listing or "- none discovered"
             return GroundingCatalogResult(
-                message=f"predicate-grounding primitives:\n{primitives}",
-                primitives=primitives,
+                message=(
+                    f"approved grounding factories:\n{primitives}\n"
+                    f"reviewed EQL vocabulary:\n{vocabulary}"
+                ),
+                primitives=f"{primitives}\n{vocabulary}",
             )
 
         def search_capability_catalog(
@@ -622,6 +656,85 @@ class RetrievalAugmentedPlanningAgent(RepairBackend):
                 gap=to_json(gap),
             )
 
+        def propose_grounding_factory_candidate(
+            arguments: GroundingFactoryCandidateArguments,
+        ) -> GroundingFactoryCandidateResult:
+            candidate = GroundingFactoryCandidate(
+                candidate_id=arguments.candidate_id,
+                proposed_uid=arguments.proposed_uid,
+                semantic_name=arguments.semantic_name,
+                source_code=arguments.source_code,
+                roles=tuple(
+                    GroundingFactoryRole(role.name, SymbolType(role.symbol_type))
+                    for role in arguments.roles
+                ),
+                generated_by=self.name,
+                rationale=arguments.rationale,
+                evidence=tuple(arguments.evidence),
+                parameters=tuple(
+                    GroundingFactoryParameter(
+                        name=parameter.name,
+                        value_type=parameter.value_type,
+                        required=parameter.required,
+                        minimum=parameter.minimum,
+                        maximum=parameter.maximum,
+                    )
+                    for parameter in arguments.parameters
+                ),
+            )
+            meter.spend_candidate()
+            if task.validate_grounding_candidate is None:
+                return GroundingFactoryCandidateResult(
+                    message="grounding-factory review is unavailable in this setting",
+                    registered=False,
+                    candidate=to_json(candidate),
+                    objections=["no grounding source validator is configured"],
+                )
+            objections = list(task.validate_grounding_candidate(candidate))
+            if objections:
+                return GroundingFactoryCandidateResult(
+                    message="candidate source rejected:\n- " + "\n- ".join(objections),
+                    registered=False,
+                    candidate=to_json(candidate),
+                    objections=objections,
+                )
+            if task.grounding_candidate_sink is None:
+                return GroundingFactoryCandidateResult(
+                    message="candidate is valid, but no pending-review store is configured",
+                    registered=False,
+                    candidate=to_json(candidate),
+                    objections=["no grounding candidate store is configured"],
+                )
+            task.grounding_candidate_sink(candidate)
+            state.grounding_factory_candidate = candidate
+            return GroundingFactoryCandidateResult(
+                message=(
+                    "candidate stored as pending-review; a human must approve it "
+                    "before it can be materialized or executed"
+                ),
+                registered=True,
+                candidate=to_json(candidate),
+            )
+
+        def report_missing_grounding_capability(
+            arguments: MissingGroundingCapabilityArguments,
+        ) -> MissingGroundingCapabilityResult:
+            gap = MissingGroundingCapability(
+                required_relation=arguments.required_relation,
+                input_types=tuple(sorted(arguments.input_types.items())),
+                missing_computation=arguments.missing_computation,
+                reason=arguments.reason,
+            )
+            state.missing_grounding_capability = gap
+            return MissingGroundingCapabilityResult(
+                message=(
+                    "recorded MissingGroundingCapability; platform work is "
+                    "required before this predicate can be grounded"
+                ),
+                recorded=True,
+                gap=to_json(gap),
+            )
+
         return ToolRegistry(
             [
                 RepairTool(
@@ -713,6 +826,26 @@ class RetrievalAugmentedPlanningAgent(RepairBackend):
                     report_missing_execution_capability,
                 ),
                 RepairTool(
+                    "propose_grounding_factory_candidate",
+                    (
+                        "draft a bounded native-EQL evaluator for the human review "
+                        "queue when no reviewed grounding factory is sufficient"
+                    ),
+                    GroundingFactoryCandidateArguments,
+                    GroundingFactoryCandidateResult,
+                    propose_grounding_factory_candidate,
+                ),
+                RepairTool(
+                    "report_missing_grounding_capability",
+                    (
+                        "end with a structured grounding gap when the reviewed "
+                        "EQL vocabulary cannot compute the required relation"
+                    ),
+                    MissingGroundingCapabilityArguments,
+                    MissingGroundingCapabilityResult,
+                    report_missing_grounding_capability,
+                ),
+                RepairTool(
                     "declare_unsupported",
                     "end because the platform lacks a required capability",
                     UnsupportedArguments,
@@ -754,7 +887,14 @@ class RetrievalAugmentedPlanningAgent(RepairBackend):
                 )
             ),
             evaluators=task.evaluator_listing,
-            predicate_queries=task.evaluator_listing or "- none registered",
+            predicate_queries=(
+                task.grounding_factory_listing
+                or task.evaluator_listing
+                or "- none registered"
+            ),
+            grounding_vocabulary=(
+                task.grounding_vocabulary_listing or "- none discovered"
+            ),
             capability_candidates=task.capability_draft_listing or "- none",
             skills=task.capability_listing,
             types=render_symbol_types(task.library.symbol_types),
@@ -792,6 +932,7 @@ def _candidate_signature(patch: ModelPatch) -> tuple:
                 predicate.name,
                 predicate.parameter_types,
                 predicate.evaluator,
+                predicate.grounding_plan,
                 predicate.fluent,
             )
             for predicate in patch.predicates

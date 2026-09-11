@@ -10,23 +10,25 @@ checked names and types; it raises on anything a gate would have rejected.
 from __future__ import annotations
 
 import re
+from typing import Literal as TypingLiteral
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from typing_extensions import Optional
 
-from resym.platform.krrood_queries import named_colors
 from resym.core.model import (
+    GROUNDING_PLAN_EVALUATOR_KEY,
     BindingSource,
     CapabilityRef,
     Literal,
     Operator,
     OperatorExecutionBinding,
+    PredicateGroundingPlan,
     PredicateSymbol,
     Provenance,
     RoleBinding,
     SymbolType,
 )
-from typing_extensions import Literal as TypingLiteral
-from typing_extensions import Optional
+from resym.platform.krrood_queries import named_colors
 
 
 def _known_type(value: str) -> str:
@@ -85,6 +87,43 @@ class LiteralEdits(BaseModel):
         return self
 
 
+class GroundingPlanModel(BaseModel):
+    """
+    Structured binding to one already-approved grounding factory.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    factory_uid: str = Field(min_length=1)
+    approved_factory_checksum: str = Field(min_length=1)
+    role_bindings: dict[str, int] = Field(default_factory=dict)
+    parameters: dict[str, str | int | float | bool] = Field(default_factory=dict)
+    negated: bool = False
+    version: str = "1"
+
+    @field_validator("role_bindings")
+    @classmethod
+    def _argument_positions_are_non_negative(
+        cls, value: dict[str, int]
+    ) -> dict[str, int]:
+        if any(position < 0 for position in value.values()):
+            raise ValueError("grounding role positions must be non-negative")
+        return value
+
+    def to_plan(self) -> PredicateGroundingPlan:
+        """
+        Convert model output into the persistent reviewed-plan record.
+        """
+        return PredicateGroundingPlan(
+            factory_uid=self.factory_uid,
+            approved_factory_checksum=self.approved_factory_checksum,
+            role_bindings=tuple(sorted(self.role_bindings.items())),
+            parameters=tuple(sorted(self.parameters.items())),
+            negated=self.negated,
+            version=self.version,
+        )
+
+
 class PredicateProposal(BaseModel):
     """
     A predicate symbol the model wants to add to the library.
@@ -94,8 +133,9 @@ class PredicateProposal(BaseModel):
 
     name: str
     parameter_types: list[str]
-    evaluator: str
+    evaluator: Optional[str] = None
     fluent: bool
+    grounding_plan: Optional[GroundingPlanModel] = None
     uid: Optional[str] = None
     """
     Stable semantic identity when the predicate realizes a known ref (for example a
@@ -103,6 +143,16 @@ class PredicateProposal(BaseModel):
     """
 
     version: str = "1"
+
+    @model_validator(mode="after")
+    def has_one_grounding_implementation(self) -> PredicateProposal:
+        if self.evaluator is None and self.grounding_plan is None:
+            raise ValueError("predicate needs an evaluator or grounding_plan")
+        if self.evaluator is not None and self.grounding_plan is not None:
+            raise ValueError(
+                "predicate cannot use evaluator and grounding_plan together"
+            )
+        return self
 
     @field_validator("parameter_types")
     @classmethod
@@ -120,10 +170,15 @@ class PredicateProposal(BaseModel):
         return PredicateSymbol(
             name=self.name,
             parameter_types=tuple(SymbolType(t) for t in self.parameter_types),
-            evaluator=self.evaluator,
+            evaluator=self.evaluator or GROUNDING_PLAN_EVALUATOR_KEY,
             fluent=self.fluent,
             uid=self.uid,
             version=self.version,
+            grounding_plan=(
+                self.grounding_plan.to_plan()
+                if self.grounding_plan is not None
+                else None
+            ),
         )
 
 

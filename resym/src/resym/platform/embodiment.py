@@ -23,6 +23,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from typing_extensions import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from resym.platform.grounding_catalog import GroundingFactoryCatalog
+
 
 class ToolOrientation(Enum):
     """How reachability targets orient the tool frame.
@@ -64,10 +69,28 @@ class EmbodimentProfile:
     tool_orientation: ToolOrientation = ToolOrientation.BASE_ALIGNED
     """How reachability targets orient the tool frame."""
 
-    def missing_evaluators(self, selection) -> tuple[str, ...]:
+    def missing_evaluators(
+        self,
+        selection,
+        grounding_catalog: GroundingFactoryCatalog | None = None,
+    ) -> tuple[str, ...]:
         """Evaluator bindings used by the selection but absent here."""
         missing = []
         for predicate in selection.predicates.values():
+            plan = predicate.grounding_plan
+            if plan is not None:
+                if grounding_catalog is None:
+                    missing.append(
+                        f"predicate '{predicate.name}' needs grounding factory "
+                        f"'{plan.factory_uid}', but no catalog is loaded"
+                    )
+                elif not grounding_catalog.supports(plan.factory_uid, self.name):
+                    missing.append(
+                        f"predicate '{predicate.name}' needs grounding factory "
+                        f"'{plan.factory_uid}', which embodiment '{self.name}' "
+                        "does not implement"
+                    )
+                continue
             implementation = predicate.implementation
             if implementation.evaluator_key not in self.evaluators:
                 missing.append(

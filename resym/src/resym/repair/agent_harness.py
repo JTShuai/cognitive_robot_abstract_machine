@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from typing_extensions import Callable, Optional
 
 from resym.llm.schemas import LibraryProposal
-from resym.core.model import SymbolType
+from resym.core.model import GroundingFactoryParameterType, SymbolType
 from resym.repair.backends import BudgetExhaustedError, BudgetMeter
 
 MODEL_OBSERVATION_LIMIT = 1200
@@ -80,6 +80,92 @@ class MissingExecutionCapabilityArguments(ToolArguments):
     def role_types_are_valid(self) -> MissingExecutionCapabilityArguments:
         for type_reference in self.required_roles.values():
             SymbolType(type_reference)
+        return self
+
+
+class MissingGroundingCapabilityArguments(ToolArguments):
+    """
+    Structured report for a world-query ability absent from the platform.
+    """
+
+    required_relation: str = Field(min_length=1)
+    input_types: dict[str, str] = Field(default_factory=dict)
+    missing_computation: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def input_types_are_valid(self) -> MissingGroundingCapabilityArguments:
+        for type_reference in self.input_types.values():
+            SymbolType(type_reference)
+        return self
+
+
+class GroundingFactoryParameterArguments(ToolArguments):
+    """
+    Reviewed shape proposed for one factory configuration value.
+    """
+
+    name: str = Field(min_length=1)
+    value_type: GroundingFactoryParameterType
+    required: bool = True
+    minimum: float | None = None
+    maximum: float | None = None
+
+    @model_validator(mode="after")
+    def numeric_range_is_ordered(self) -> GroundingFactoryParameterArguments:
+        if self.value_type not in {
+            GroundingFactoryParameterType.INTEGER,
+            GroundingFactoryParameterType.NUMBER,
+        } and (self.minimum is not None or self.maximum is not None):
+            raise ValueError("only numeric parameters may declare bounds")
+        if (
+            self.minimum is not None
+            and self.maximum is not None
+            and self.minimum > self.maximum
+        ):
+            raise ValueError("minimum cannot exceed maximum")
+        return self
+
+
+class GroundingFactoryRoleArguments(ToolArguments):
+    """
+    One semantic input of a drafted factory, in declaration order.
+    """
+
+    name: str = Field(min_length=1)
+    symbol_type: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def symbol_type_is_valid(self) -> GroundingFactoryRoleArguments:
+        SymbolType(self.symbol_type)
+        return self
+
+
+class GroundingFactoryCandidateArguments(ToolArguments):
+    """
+    Native EQL source proposal for the human grounding-review queue.
+
+    Role order is positional semantics: it must match how the drafted
+    ``evaluate`` body reads its ``arguments`` tuple.
+    """
+
+    candidate_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+    proposed_uid: str = Field(min_length=1)
+    semantic_name: str = Field(min_length=1)
+    source_code: str = Field(min_length=1, max_length=20_000)
+    roles: list[GroundingFactoryRoleArguments] = Field(default_factory=list)
+    parameters: list[GroundingFactoryParameterArguments] = Field(default_factory=list)
+    rationale: str = Field(min_length=1)
+    evidence: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def names_are_unique(self) -> GroundingFactoryCandidateArguments:
+        role_names = [role.name for role in self.roles]
+        if len(role_names) != len(set(role_names)):
+            raise ValueError("grounding role names must be unique")
+        parameter_names = [parameter.name for parameter in self.parameters]
+        if len(parameter_names) != len(set(parameter_names)):
+            raise ValueError("grounding parameter names must be unique")
         return self
 
 
@@ -174,6 +260,25 @@ class MissingExecutionCapabilityResult(ToolResult):
     unknown_candidate_realizations: list[str] = Field(default_factory=list)
 
 
+class MissingGroundingCapabilityResult(ToolResult):
+    """
+    Persistence result for one structured grounding-gap report.
+    """
+
+    recorded: bool
+    gap: dict[str, Any]
+
+
+class GroundingFactoryCandidateResult(ToolResult):
+    """
+    Static verdict and persistence result for one EQL source proposal.
+    """
+
+    registered: bool
+    candidate: Optional[dict[str, Any]] = None
+    objections: list[str] = Field(default_factory=list)
+
+
 ToolHandler = Callable[[ToolArguments], ToolResult]
 
 
@@ -236,6 +341,8 @@ AGENT_TOOL_NAMES = frozenset(
         "compare_patch_versions",
         "submit_for_admission",
         "report_missing_execution_capability",
+        "report_missing_grounding_capability",
+        "propose_grounding_factory_candidate",
         "declare_unsupported",
     }
 )

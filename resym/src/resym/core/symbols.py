@@ -19,6 +19,7 @@ from resym.core.capabilities import (
     CapabilityContract,
     OperatorExecutionBinding,
 )
+from resym.core.grounding import PredicateGroundingPlan
 from resym.core.predicate_refs import (
     PredicateImplementation,
     PredicateRef,
@@ -63,6 +64,10 @@ class PredicateSymbol:
     uid: str | None = None
     version: str = "1"
     truth_procedure_ref: TruthProcedureRef | None = None
+    grounding_plan: PredicateGroundingPlan | None = None
+    """
+    Reviewed EQL factory binding; absent for legacy registered evaluators.
+    """
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "parameter_types", tuple(self.parameter_types))
@@ -72,7 +77,11 @@ class PredicateSymbol:
             object.__setattr__(
                 self,
                 "truth_procedure_ref",
-                TruthProcedureRef.registered(self.evaluator),
+                (
+                    TruthProcedureRef.query(self.name, self.grounding_plan.version)
+                    if self.grounding_plan is not None
+                    else TruthProcedureRef.registered(self.evaluator)
+                ),
             )
 
     @property

@@ -26,10 +26,18 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, abort, request, send_file, url_for
+from flask import Flask, abort, redirect, request, send_file, url_for
 
+from resym.core.grounding import GroundingFactoryCandidate, GroundingFactorySpec
 from resym.observability.i18n import to_chinese
 from resym.planning.events import PipelineEvent
+from resym.platform.grounding_catalog import (
+    GroundingFactoryCatalog,
+    GroundingFactoryWorkspace,
+    GroundingVocabulary,
+    GroundingVocabularyCandidate,
+    initialize_grounding_factories,
+)
 
 STAGE_TITLES = {
     "A_world": "Stage A · world",
@@ -362,11 +370,24 @@ details.capability-entry>summary .badge{margin-left:auto}
 """
 
 
-def create_app(runs_root: Path, library_dir: Path | None = None) -> Flask:
+def create_app(
+    runs_root: Path,
+    library_dir: Path | None = None,
+    grounding_workspace: GroundingFactoryWorkspace | None = None,
+    grounding_vocabulary: GroundingVocabulary | None = None,
+) -> Flask:
     runs_root = runs_root.resolve()
     if library_dir is not None:
         library_dir = library_dir.resolve()
     app = Flask(__name__)
+
+    def _current_grounding_vocabulary() -> GroundingVocabulary:
+        if (
+            grounding_workspace is not None
+            and grounding_workspace.vocabulary_candidates()
+        ):
+            return grounding_workspace.reviewed_vocabulary()
+        return grounding_vocabulary or GroundingVocabulary()
 
     def _lang() -> str:
         value = request.args.get("lang") or request.cookies.get("resym_lang")
@@ -396,6 +417,11 @@ def create_app(runs_root: Path, library_dir: Path | None = None) -> Flask:
         return f"<span class=langswitch>{''.join(links)}</span>"
 
     def _page(title: str, body: str, nav: str = "") -> str:
+        grounding_link = (
+            f"<a href='{url_for('grounding_factories')}'>grounding factories</a>"
+            if grounding_workspace is not None
+            else ""
+        )
         page = (
             f"<!doctype html><meta charset=utf-8><title>{html.escape(title)}</title>"
             f"<meta name=viewport content='width=device-width,initial-scale=1'>"
@@ -404,6 +430,7 @@ def create_app(runs_root: Path, library_dir: Path | None = None) -> Flask:
             f"<span>{html.escape(title)}</span><nav>{nav}"
             f"<a href='{url_for('system_libraries')}'>system library</a>"
             f"<a href='{url_for('capability_catalog')}'>capabilities</a>"
+            f"{grounding_link}"
             f"{_lang_switch()}</nav></header>"
             f"<main>{body}</main>"
         )
@@ -446,6 +473,13 @@ def create_app(runs_root: Path, library_dir: Path | None = None) -> Flask:
         if not runs:
             return _page("runs", "<p>No runs recorded yet.</p>")
         latest = runs[0]
+        grounding_card = (
+            f"<a class=navcard href='{url_for('grounding_factories')}'><b>✓ Grounding factories</b>"
+            "<span>Review agent-authored EQL candidates and inspect the "
+            "current locally approved predicate queries.</span></a>"
+            if grounding_workspace is not None
+            else ""
+        )
         rows = [
             "<div class=hero><h1>reSym run viewer</h1>"
             "<p>reSym repairs a robot's symbolic planning model when a "
@@ -466,6 +500,7 @@ def create_app(runs_root: Path, library_dir: Path | None = None) -> Flask:
             "<span>All reviewed capability contracts, their realization "
             "status, required robot resources, and native Coraplex "
             "actions.</span></a>"
+            f"{grounding_card}"
             f"<a class=navcard href='{url_for('run_page', name=latest.name)}'><b>🕐 Latest run</b>"
             f"<span><code>{html.escape(latest.name)}</code> — its goal, "
             "artifacts, and (for experiments) the admission results.</span></a>"
@@ -788,6 +823,68 @@ def create_app(runs_root: Path, library_dir: Path | None = None) -> Flask:
                 _operator_usage_by_capability(library_dir),
             ),
         )
+
+    @app.route("/grounding-factories")
+    def grounding_factories() -> str:
+        if grounding_workspace is None:
+            abort(404)
+        return _page(
+            "grounding factories",
+            _render_grounding_factories(
+                grounding_workspace, _current_grounding_vocabulary()
+            ),
+        )
+
+    @app.post("/grounding-factories/<candidate_id>/approve")
+    def approve_grounding_factory(candidate_id: str):
+        if grounding_workspace is None:
+            abort(404)
+        reviewer = str(request.form.get("reviewer") or "").strip()
+        if not reviewer:
+            abort(400)
+        grounding_workspace.approve(
+            candidate_id,
+            reviewer=reviewer,
+            vocabulary=_current_grounding_vocabulary(),
+            review_note=str(request.form.get("review_note") or "").strip() or None,
+        )
+        return redirect(url_for("grounding_factories"))
+
+    @app.post("/grounding-factories/<candidate_id>/reject")
+    def reject_grounding_factory(candidate_id: str):
+        if grounding_workspace is None:
+            abort(404)
+        reviewer = str(request.form.get("reviewer") or "").strip()
+        review_note = str(request.form.get("review_note") or "").strip()
+        if not reviewer or not review_note:
+            abort(400)
+        grounding_workspace.reject(candidate_id, reviewer, review_note)
+        return redirect(url_for("grounding_factories"))
+
+    @app.post("/grounding-vocabulary/<path:qualified_name>/approve")
+    def approve_grounding_vocabulary(qualified_name: str):
+        if grounding_workspace is None:
+            abort(404)
+        reviewer = str(request.form.get("reviewer") or "").strip()
+        if not reviewer:
+            abort(400)
+        grounding_workspace.approve_vocabulary(
+            qualified_name,
+            reviewer,
+            str(request.form.get("review_note") or "").strip() or None,
+        )
+        return redirect(url_for("grounding_factories"))
+
+    @app.post("/grounding-vocabulary/<path:qualified_name>/reject")
+    def reject_grounding_vocabulary(qualified_name: str):
+        if grounding_workspace is None:
+            abort(404)
+        reviewer = str(request.form.get("reviewer") or "").strip()
+        review_note = str(request.form.get("review_note") or "").strip()
+        if not reviewer or not review_note:
+            abort(400)
+        grounding_workspace.reject_vocabulary(qualified_name, reviewer, review_note)
+        return redirect(url_for("grounding_factories"))
 
     @app.route("/run/<name>/libraries")
     def run_libraries(name: str) -> str:
@@ -2127,6 +2224,222 @@ _CAPABILITY_CATEGORIES: tuple[tuple[str, str, str], ...] = (
 """Display groups for the catalog, keyed by the label prefix before the dot."""
 
 
+def _render_grounding_factories(
+    workspace: GroundingFactoryWorkspace,
+    vocabulary: GroundingVocabulary,
+) -> str:
+    """Render local candidates and current locally approved implementations."""
+    candidates = workspace.candidates()
+    catalog = GroundingFactoryCatalog.load(workspace=workspace)
+    specifications = tuple(catalog)
+    local_count = len(workspace.specifications())
+    pending_count = sum(
+        str(candidate.review_status) == "pending-review" for candidate in candidates
+    )
+    candidate_cards = [
+        _render_grounding_candidate(candidate) for candidate in candidates
+    ]
+    approved_cards = [
+        _render_approved_grounding_factory(specification)
+        for specification in specifications
+    ]
+    unavailable_cards = "".join(
+        "<div class=card><b><code>"
+        f"{html.escape(uid)}</code></b> "
+        "<span class='badge warn'>unavailable</span>"
+        f"<div class=muted>{html.escape(reason)}</div></div>"
+        for uid, reason in sorted(catalog.unavailable.items())
+    )
+    vocabulary_candidates = workspace.vocabulary_candidates()
+    vocabulary_candidate_cards = "".join(
+        _render_grounding_vocabulary_candidate(item) for item in vocabulary_candidates
+    )
+    vocabulary_rows = "".join(
+        "<tr><td><code>"
+        f"{html.escape(entry.qualified_name)}</code></td><td>"
+        f"{html.escape(entry.signature)}</td><td>"
+        f"{html.escape(entry.kind.value)}</td><td><code>"
+        f"{html.escape(entry.source_checksum)}</code></td></tr>"
+        for entry in vocabulary.entries
+    )
+    return (
+        "<div class=hero><h1>Grounding factories</h1>"
+        "<p>Agent-authored EQL remains non-executable until a human approves it. "
+        "Approval materializes one local Python module; publishing it to a shared "
+        "repository is a separate decision.</p></div>"
+        "<div class=catalog-summary>"
+        f"<span class=metric><b>candidates</b>: {len(candidates)}</span>"
+        f"<span class=metric><b>pending review</b>: {pending_count}</span>"
+        f"<span class=metric><b>approved catalog</b>: {len(specifications)}</span>"
+        f"<span class=metric><b>approved local</b>: {local_count}</span></div>"
+        "<h2>Review queue</h2>"
+        + ("".join(candidate_cards) or "<p class=muted>No candidates.</p>")
+        + "<h2>Current approved catalog</h2>"
+        + ("".join(approved_cards) or "<p class=muted>No approved factories.</p>")
+        + (
+            f"<h2>Unavailable factories</h2>{unavailable_cards}"
+            if unavailable_cards
+            else ""
+        )
+        + "<h2>Scanned EQL review queue</h2>"
+        + (
+            vocabulary_candidate_cards
+            or "<p class=muted>No source scan has been synchronized.</p>"
+        )
+        + "<h2>Scanned EQL vocabulary</h2>"
+        + (
+            "<div class=tablewrap><table><tr><th>symbol</th><th>signature</th>"
+            "<th>kind</th><th>source checksum</th></tr>"
+            f"{vocabulary_rows}</table></div>"
+            if vocabulary_rows
+            else "<p class=muted>No EQL symbols discovered.</p>"
+        )
+    )
+
+
+def _render_grounding_vocabulary_candidate(
+    candidate: GroundingVocabularyCandidate,
+) -> str:
+    """Render one source-discovered EQL symbol and its review controls."""
+    entry = candidate.entry
+    status = str(candidate.review_status)
+    controls = ""
+    if status == "pending-review":
+        approve_url = url_for(
+            "approve_grounding_vocabulary", qualified_name=entry.qualified_name
+        )
+        reject_url = url_for(
+            "reject_grounding_vocabulary", qualified_name=entry.qualified_name
+        )
+        controls = (
+            f"<form method=post action='{html.escape(approve_url)}'>"
+            "<input name=reviewer required placeholder='reviewer'> "
+            "<input name=review_note placeholder='review note'> "
+            "<button type=submit>Approve vocabulary symbol</button></form>"
+            f"<form method=post action='{html.escape(reject_url)}'>"
+            "<input name=reviewer required placeholder='reviewer'> "
+            "<input name=review_note required placeholder='rejection reason'> "
+            "<button type=submit>Reject</button></form>"
+        )
+    return (
+        "<div class=card><b><code>"
+        f"{html.escape(entry.qualified_name)}</code></b> "
+        f"<span class='badge'>{html.escape(status)}</span>"
+        f"<div>{html.escape(entry.signature)} · {html.escape(entry.kind.value)}</div>"
+        "<div class=muted>source checksum: <code>"
+        f"{html.escape(entry.source_checksum)}</code></div>{controls}</div>"
+    )
+
+
+def _render_grounding_candidate(candidate: GroundingFactoryCandidate) -> str:
+    """Render one pending or reviewed EQL source proposal."""
+    status = str(candidate.review_status)
+    roles = "".join(
+        f"<span class=chip>{html.escape(role.name)}: "
+        f"{html.escape(role.symbol_type.short_name)}</span>"
+        for role in candidate.roles
+    )
+    evidence = (
+        "".join(
+            f"<span class=chip>{html.escape(item)}</span>"
+            for item in candidate.evidence
+        )
+        or "<span class=muted>none recorded</span>"
+    )
+    parameters = (
+        "".join(
+            f"<span class=chip>{html.escape(parameter.name)}: "
+            f"{html.escape(parameter.value_type.value)}</span>"
+            for parameter in candidate.parameters
+        )
+        or "<span class=muted>none</span>"
+    )
+    review = (
+        _render_grounding_review_form(candidate)
+        if status == "pending-review"
+        else (
+            "<div class=lib-row><span class=k>reviewed by</span><span>"
+            f"{html.escape(candidate.reviewed_by or '—')}</span></div>"
+            "<div class=lib-row><span class=k>review note</span><span>"
+            f"{html.escape(candidate.review_note or '—')}</span></div>"
+        )
+    )
+    badge_class = "warn" if status == "pending-review" else ""
+    return (
+        "<details class=libsec open><summary><b>"
+        f"{html.escape(candidate.semantic_name)}</b> "
+        f"<code>{html.escape(candidate.candidate_id)}</code> "
+        f"<span class='badge {badge_class}'>{html.escape(status)}</span></summary>"
+        "<div class=lib-row><span class=k>proposed uid</span><span><code>"
+        f"{html.escape(candidate.proposed_uid)}</code></span></div>"
+        f"<div class=lib-row><span class=k>roles</span><span>{roles}</span></div>"
+        f"<div class=lib-row><span class=k>parameters</span><span>{parameters}</span></div>"
+        "<div class=lib-row><span class=k>generated by</span><span>"
+        f"{html.escape(candidate.generated_by)}</span></div>"
+        "<div class=lib-row><span class=k>rationale</span><span>"
+        f"{html.escape(candidate.rationale)}</span></div>"
+        f"<div class=lib-row><span class=k>evidence</span><span>{evidence}</span></div>"
+        "<details><summary>proposed native EQL source</summary><pre class=wrap>"
+        f"{html.escape(candidate.source_code)}</pre></details>{review}</details>"
+    )
+
+
+def _render_grounding_review_form(candidate: GroundingFactoryCandidate) -> str:
+    """Render explicit approve and reject operations for one pending candidate."""
+    approve_url = url_for(
+        "approve_grounding_factory", candidate_id=candidate.candidate_id
+    )
+    reject_url = url_for(
+        "reject_grounding_factory", candidate_id=candidate.candidate_id
+    )
+    return (
+        "<div class=card><b>Human review</b>"
+        f"<form method=post action='{html.escape(approve_url)}'>"
+        "<input name=reviewer required placeholder='reviewer'> "
+        "<input name=review_note placeholder='review note'> "
+        "<button type=submit>Approve and materialize</button></form>"
+        f"<form method=post action='{html.escape(reject_url)}'>"
+        "<input name=reviewer required placeholder='reviewer'> "
+        "<input name=review_note required placeholder='rejection reason'> "
+        "<button type=submit>Reject</button></form></div>"
+    )
+
+
+def _render_approved_grounding_factory(
+    specification: GroundingFactorySpec,
+) -> str:
+    """Render one active source-backed grounding factory."""
+    origin_label = (
+        "approved-local"
+        if specification.origin.value == "local"
+        else specification.origin.value
+    )
+    parameters = (
+        ", ".join(
+            f"{parameter.name}: {parameter.value_type.value}"
+            for parameter in specification.parameters
+        )
+        or "none"
+    )
+    return (
+        "<div class=card><b>"
+        f"{html.escape(specification.semantic_name)}</b> "
+        f"<span class='badge ok'>{html.escape(origin_label)}</span>"
+        "<div class=lib-row><span class=k>factory uid</span><span><code>"
+        f"{html.escape(specification.uid)}</code></span></div>"
+        "<div class=lib-row><span class=k>implementation</span><span><code>"
+        f"{html.escape(specification.implementation_ref)}</code></span></div>"
+        "<div class=lib-row><span class=k>checksum</span><span><code>"
+        f"{html.escape(specification.implementation_checksum)}</code></span></div>"
+        "<div class=lib-row><span class=k>revision</span><span>"
+        f"{html.escape(specification.active_revision_id)}</span></div>"
+        "<div class=lib-row><span class=k>parameters</span><span>"
+        f"{html.escape(parameters)}</span></div>"
+        "<div class=lib-row><span class=k>reviewed by</span><span>"
+        f"{html.escape(specification.reviewed_by)}</span></div></div>"
+    )
+
+
 def _render_capability_catalog(
     data: dict, operator_usage: dict[str, list[str]] | None = None
 ) -> str:
@@ -2549,6 +2862,32 @@ def _render_symbol_library(data) -> str:
 
 
 def _truth_procedure_cell(predicate: dict) -> str:
+    grounding_plan = predicate.get("grounding_plan")
+    if isinstance(grounding_plan, dict):
+        factory_uid = html.escape(str(grounding_plan.get("factory_uid", "?")))
+        checksum = html.escape(
+            str(grounding_plan.get("approved_factory_checksum", "?"))
+        )
+        details = [f"factory <code>{factory_uid}</code>"]
+        if grounding_plan.get("negated"):
+            details.append("negated")
+        parameters = grounding_plan.get("parameters")
+        if isinstance(parameters, dict):
+            parameter_items = parameters.items()
+        elif isinstance(parameters, list):
+            parameter_items = (
+                item for item in parameters if isinstance(item, list) and len(item) == 2
+            )
+        else:
+            parameter_items = ()
+        rendered_parameters = ", ".join(
+            f"{html.escape(str(name))}={html.escape(str(value))}"
+            for name, value in parameter_items
+        )
+        if rendered_parameters:
+            details.append(f"parameters <code>{rendered_parameters}</code>")
+        details.append(f"checksum <code>{checksum}</code>")
+        return "grounding plan · " + " · ".join(details)
     procedure_ref = predicate.get("truth_procedure_ref")
     if isinstance(procedure_ref, dict):
         reference = _stable_ref_cell(procedure_ref)
@@ -4742,6 +5081,14 @@ def main() -> None:
             "page (default: a 'library' directory beside the runs root)."
         ),
     )
+    parser.add_argument(
+        "--grounding-workspace",
+        default=None,
+        help=(
+            "Local grounding-factory review workspace. When supplied, the Viewer "
+            "enables candidate review and local source materialization."
+        ),
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=5000)
     parser.add_argument("--debug", action="store_true")
@@ -4752,7 +5099,20 @@ def main() -> None:
         if args.library_dir is not None
         else runs_root.resolve().parent / "library"
     )
-    app = create_app(runs_root, library_dir=library_dir)
+    grounding_workspace = None
+    grounding_vocabulary = None
+    if args.grounding_workspace is not None:
+        grounding_initialization = initialize_grounding_factories(
+            Path(args.grounding_workspace)
+        )
+        grounding_workspace = grounding_initialization.workspace
+        grounding_vocabulary = grounding_initialization.reviewed_vocabulary
+    app = create_app(
+        runs_root,
+        library_dir=library_dir,
+        grounding_workspace=grounding_workspace,
+        grounding_vocabulary=grounding_vocabulary,
+    )
     print(
         f"serving logs from {Path(args.runs_root).resolve()} at http://{args.host}:{args.port}"
     )

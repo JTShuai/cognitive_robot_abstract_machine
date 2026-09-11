@@ -1,6 +1,6 @@
 # reSym
 
-reSym builds on : **Coraplex**, whose native actions are
+reSym builds on two fixed CRAM layers: **Coraplex**, whose native actions are
 the robot's executable capability interface, and **krrood** with the Semantic
 Digital Twin, whose reviewed entity queries are the source of Boolean truth
 about the world. On top of them, reSym maintains the predicates, operators,
@@ -9,14 +9,16 @@ and versioned symbolic assets. Symbol gaps and execution failures are
 diagnosed into structured certificates, a retrieval-augmented LLM agent
 proposes candidate repairs, and a deterministic curator validates and decides
 admission — so the same Coraplex action primitives adapt to new tasks and
-scenes without changes to their implementation code, and no generated code
-ever enters the query or execution path.
+scenes without changes to their implementation code, and nothing the LLM
+produces enters the query or execution path unreviewed.
 
 ## Trust boundary
 
 - The symbolic model is data: predicates, operators, and execution bindings
-  are typed dataclasses. The LLM only proposes data-shaped patches; it never
-  writes executable code, admits its own proposals, or drives the robot.
+  are typed dataclasses. The LLM proposes data-shaped patches, and may draft
+  restricted world queries as review candidates — but nothing it produces
+  executes unreviewed, and it never admits its own proposals or drives the
+  robot.
 - The curator is a deterministic program: it independently checks types,
   registry whitelists, and effect/contract consistency. Admission creates a
   new version; bad versions can be quarantined and rolled back.
@@ -63,55 +65,129 @@ test/resym_test/                     core tests (host-runnable)
 test/experiments_test/resym/         scene and experiment tests (container)
 ```
 
-## Getting started
+## First-time initialization
 
-Full functionality needs ROS 2, CRAM, Coraplex, and Fast Downward; Docker is
-recommended:
+Run the commands below from the CRAM monorepo root. Choose either Docker or a
+local installation; they are independent setup paths.
+
+### Option 1: Docker
+
+Docker provides ROS 2, the CRAM workspace, Python dependencies, Fast Downward,
+and visualization dependencies:
 
 ```bash
-# from the CRAM monorepo root
 docker build -f resym/Dockerfile -t cram:jazzy-resym .
 ```
 
-External data (ontology files and the UniDomain retrieval corpus) is not kept
-in Git; it installs into `resym/augment_dataset/`. The Docker build does both
-automatically; locally, run from the CRAM root:
+The runtime scripts bind-mount the current checkout. Populate its ignored
+`resym/augment_dataset/` directory from the container so no local Python
+environment is required:
 
 ```bash
-uv sync --extra dev --active
-uv run --active --no-sync resym-install-ontologies
-uv run --active --no-sync resym-install-corpus
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  -e HOME=/tmp \
+  -v "$PWD:/opt/cram" \
+  -w /opt/cram/resym \
+  cram:jazzy-resym \
+  bash -c 'uv run --active --no-sync resym-install-ontologies &&
+           uv run --active --no-sync resym-install-corpus'
 ```
 
-- `resym-install-ontologies` downloads and verifies pinned SOMA and IEEE 1872
-  OWL files into `augment_dataset/ontology/`.
-- `resym-install-corpus` downloads the pinned UniDomain archive (Hugging Face
-  `SII-PrimoButterfly/UniDomain-Data`, ~4 MB), verifies and extracts it into
-  `augment_dataset/unidomain/`, then parses, deduplicates, and freezes it into
-  the retrieval release `augment_dataset/corpus_release/r1/`, which must
-  reproduce the pinned fragments checksum. The optional dense index is built
-  separately (`uv run python -m resym.knowledge.dense`, needs
-  sentence-transformers).
-
-Both download manifests pin sources, versions, and SHA-256 checksums.
-
-LLM calls go through `llm-agent-kit`; credentials stay out of the repository:
+Start the review Viewer in Docker:
 
 ```bash
-cp .env.example .env
-cp config/llm.example.json config/llm.json
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  -e HOME=/tmp \
+  -v "$PWD:/opt/cram" \
+  -w /opt/cram/resym \
+  -p 5000:5000 \
+  cram:jazzy-resym \
+  uv run --active --no-sync python -m resym.observability.viewer \
+    runs --library-dir library \
+    --grounding-workspace tmp/grounding_factory_workspace \
+    --host 0.0.0.0
 ```
+
+### Option 2: Local installation
+
+Install ROS 2 Jazzy and `uv`, then prepare the ROS overlay and Python
+workspace:
+
+```bash
+export OVERLAY_WS="${OVERLAY_WS:-$HOME/ros2_ws}"
+./scripts/setup_ros_workspace.sh
+source /opt/ros/jazzy/setup.bash
+source "$OVERLAY_WS/install/setup.bash"
+uv sync --package resym --extra dev
+```
+
+Install the external knowledge data and Fast Downward:
+
+```bash
+uv run --no-sync resym-install-ontologies
+uv run --no-sync resym-install-corpus
+./resym/scripts/install_fast_downward.sh
+```
+
+Start the review Viewer locally:
+
+```bash
+uv run --no-sync python -m resym.observability.viewer \
+  resym/runs \
+  --library-dir resym/library \
+  --grounding-workspace resym/tmp/grounding_factory_workspace
+```
+
+The ontology installer downloads pinned SOMA and IEEE 1872 files. The corpus
+installer downloads, verifies, preprocesses, and freezes the pinned UniDomain
+release. Both use versioned manifests and SHA-256 checksums. The generated
+data, local grounding workspace, and review decisions remain outside Git.
+
+### Configure the LLM
+
+This step is needed only for runs that use the repair agent. Credentials and
+model settings stay outside version control:
+
+```bash
+cp resym/.env.example resym/.env
+cp resym/config/llm.example.json resym/config/llm.json
+```
+
+Set `CLIENT_TYPE`, `API_KEY`, and `BASE_URL` in `resym/.env`. Set the model,
+generation arguments, and retry policy in `resym/config/llm.json`. LLM calls
+go through `llm-agent-kit`; `run_in_docker.sh` injects `resym/.env` only for
+the `smoke` and `experiment` commands.
+
+### Complete the first-start review
+
+For either setup path, open
+<http://127.0.0.1:5000/grounding-factories>. At startup, reSym scans the
+installed kRrood and Semantic Digital Twin query primitives. New or changed
+items enter the review queue. Enter a reviewer name and approve only the
+vocabulary entries whose metadata and semantics are correct. Agent-authored
+factory candidates appear on the same page; approval validates and
+materializes them into the local workspace before they become executable.
+Restarting with the same workspace preserves decisions when source checksums
+have not changed. The workspace is local and ignored by Git.
+
+The `/capabilities` page shows the Coraplex actions discovered at startup,
+their reviewed `CapabilityContract` mappings, robot requirements, and any
+unmapped actions that still need platform integration.
+
+## Running
 
 Common commands:
 
 ```bash
 # core tests
-./scripts/run_in_docker.sh test -q /opt/cram/test/resym_test
+./resym/scripts/run_in_docker.sh test -q /opt/cram/test/resym_test
 # real-model smoke episode
-./scripts/run_in_docker.sh smoke --backends agentic-rag --template missing-close-operator --seed 1
+./resym/scripts/run_in_docker.sh smoke --backends agentic-rag --template missing-close-operator --seed 1
 # E1/E2 experiments (require the checksum-matched frozen splits)
-./scripts/run_in_docker.sh experiment
+./resym/scripts/run_in_docker.sh experiment
 ```
 
 Run records (worlds, plans, patches, review evidence, full provenance) are
-written to `runs/` and stay out of version control.
+written to `resym/runs/` and stay out of version control.

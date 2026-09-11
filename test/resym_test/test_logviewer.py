@@ -18,11 +18,13 @@ from resym.core.model import (  # noqa: E402
     CapabilityContract,
     CapabilityRef,
     CapabilityRole,
+    GROUNDING_PLAN_EVALUATOR_KEY,
     Literal,
     OntologyAlignment,
     Operator,
     OperatorExecutionBinding,
     PredicateRef,
+    PredicateGroundingPlan,
     PredicateSymbol,
     Provenance,
     RoleBinding,
@@ -31,6 +33,11 @@ from resym.core.model import (  # noqa: E402
 )
 from resym.observability.viewer import create_app  # noqa: E402
 from resym.observability.runlog import RunRecorder  # noqa: E402
+from resym.platform.grounding_catalog import (  # noqa: E402
+    GroundingFactoryWorkspace,
+)
+
+from .test_grounding_factory_catalog import candidate, vocabulary  # noqa: E402
 
 from resym.core.model import SymbolType
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Drawer
@@ -577,6 +584,105 @@ def test_capability_catalog_page_shows_contract_realization_action_hierarchy(tmp
     assert "implemented by" in body  # native realization row on each card
 
 
+def test_grounding_factory_page_reviews_and_materializes_agent_candidate(tmp_path):
+    workspace = GroundingFactoryWorkspace(tmp_path / "grounding")
+    workspace.submit(candidate())
+    client = create_app(
+        tmp_path / "runs",
+        grounding_workspace=workspace,
+        grounding_vocabulary=vocabulary(),
+    ).test_client()
+
+    pending = client.get("/grounding-factories").get_data(as_text=True)
+    assert "Grounding factories" in pending
+    assert "inside-region-candidate" in pending
+    assert "pending-review" in pending
+    assert "krrood.entity_query_language.factories.entity" in pending
+    assert "valid EQL" not in pending
+
+    response = client.post(
+        "/grounding-factories/inside-region-candidate/approve",
+        data={"reviewer": "human-reviewer", "review_note": "query reviewed"},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    approved = response.get_data(as_text=True)
+    assert "approved-local" in approved
+    assert "human-reviewer" in approved
+    assert len(workspace.specifications()) == 1
+
+
+def test_grounding_factory_page_reports_drifted_local_source(tmp_path):
+    workspace = GroundingFactoryWorkspace(tmp_path / "grounding")
+    workspace.submit(candidate())
+    specification = workspace.approve(
+        candidate().candidate_id,
+        reviewer="human-reviewer",
+        vocabulary=vocabulary(),
+    )
+    source_file = next(workspace.approved_package_directory.glob("factory_*.py"))
+    source_file.write_text(source_file.read_text() + "\n# tampered\n")
+    client = create_app(
+        tmp_path / "runs",
+        grounding_workspace=workspace,
+        grounding_vocabulary=vocabulary(),
+    ).test_client()
+
+    response = client.get("/grounding-factories")
+
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert specification.uid in body
+    assert "source changed" in body
+
+
+def test_grounding_factory_page_records_rejection_without_source_module(tmp_path):
+    workspace = GroundingFactoryWorkspace(tmp_path / "grounding")
+    workspace.submit(candidate())
+    client = create_app(
+        tmp_path / "runs",
+        grounding_workspace=workspace,
+        grounding_vocabulary=vocabulary(),
+    ).test_client()
+
+    response = client.post(
+        "/grounding-factories/inside-region-candidate/reject",
+        data={"reviewer": "human-reviewer", "review_note": "wrong semantics"},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert "rejected" in response.get_data(as_text=True)
+    assert workspace.specifications() == ()
+    assert not workspace.approved_package_directory.exists()
+
+
+def test_grounding_factory_page_reviews_scanned_eql_vocabulary(tmp_path):
+    workspace = GroundingFactoryWorkspace(tmp_path / "grounding")
+    workspace.synchronize_vocabulary(vocabulary())
+    selected = vocabulary().entries[0]
+    client = create_app(
+        tmp_path / "runs",
+        grounding_workspace=workspace,
+        grounding_vocabulary=workspace.reviewed_vocabulary(),
+    ).test_client()
+
+    pending = client.get("/grounding-factories").get_data(as_text=True)
+    assert selected.qualified_name in pending
+    assert "Approve vocabulary symbol" in pending
+
+    response = client.post(
+        f"/grounding-vocabulary/{selected.qualified_name}/approve",
+        data={"reviewer": "human-reviewer", "review_note": "safe EQL primitive"},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert "approved" in response.get_data(as_text=True)
+    assert workspace.reviewed_vocabulary().entries == (selected,)
+
+
 def test_capability_catalog_separates_actions_awaiting_semantic_review():
     from resym.observability.viewer import _render_capability_catalog
 
@@ -671,6 +777,39 @@ def test_system_library_page_shows_versioned_predicate_references(tmp_path):
     assert "soma:Closed@2" in body
     assert "resym:truth-procedure/registry/drawer_closed@3" in body
     assert "soma:Opened" in body and ">opened<" in body
+
+
+def test_system_library_page_shows_predicate_grounding_plan(tmp_path):
+    library = SymbolLibrary()
+    library.add(
+        PredicateSymbol(
+            name="closed",
+            parameter_types=(DRAWER_TYPE,),
+            evaluator=GROUNDING_PLAN_EVALUATOR_KEY,
+            fluent=True,
+            grounding_plan=PredicateGroundingPlan(
+                factory_uid="resym:grounding/joint-fraction-opened",
+                approved_factory_checksum="approved-checksum",
+                role_bindings=(("articulated_object", 0),),
+                parameters=(("threshold", 0.4),),
+                negated=True,
+            ),
+        )
+    )
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    library.save(library_dir / "grounded.json")
+
+    body = (
+        create_app(tmp_path / "runs", library_dir=library_dir)
+        .test_client()
+        .get("/library")
+        .get_data(as_text=True)
+    )
+
+    assert "resym:grounding/joint-fraction-opened" in body
+    assert "negated" in body
+    assert "threshold=0.4" in body
 
 
 def test_capability_catalog_groups_contracts_and_labels_every_field(tmp_path):

@@ -67,6 +67,7 @@ COLLISION_DETECTION_DISTANCE = 0.005
 colliding."""
 
 if TYPE_CHECKING:
+    from resym.platform.grounding_catalog import GroundingFactoryCatalog
     from semantic_digital_twin.robots.robot_parts import Arm
     from semantic_digital_twin.spatial_types.spatial_types import Point3
     from semantic_digital_twin.world import World
@@ -111,6 +112,9 @@ class EvaluationContext:
 
     profile: EmbodimentProfile
     """What this embodiment can do."""
+
+    grounding_catalog: GroundingFactoryCatalog | None = None
+    """Approved factory view used by predicates with a grounding plan."""
 
     budgets: EvaluationBudgets = field(default_factory=EvaluationBudgets)
     """Evaluation parameters (thresholds, sampling resolution)."""
