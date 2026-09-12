@@ -8,9 +8,11 @@ and execution bindings that task planning needs as retrievable, repairable,
 and versioned symbolic assets. Symbol gaps and execution failures are
 diagnosed into structured certificates, a retrieval-augmented LLM agent
 proposes candidate repairs, and a deterministic curator validates and decides
-admission — so the same Coraplex action primitives adapt to new tasks and
-scenes without changes to their implementation code, and nothing the LLM
-produces enters the query or execution path unreviewed.
+admission — so the same Coraplex action primitives adapt to new tasks, scenes
+and robots without changes to their implementation code or to reSym's: which
+capabilities a platform offers, and which native action realizes each, are
+reviewed artifacts drafted at initialization, and nothing the LLM produces
+enters the query or execution path unreviewed.
 
 ## Trust boundary
 
@@ -55,14 +57,14 @@ expanded and executed by Coraplex against the current environment.
 ```text
 resym/src/resym/
   core/           symbolic model, stable references, grounding failures
-  platform/       capability contracts, embodiment, grounding-factory review, feasibility
+  platform/       CRAM/Coraplex adapters, capability contracts, grounding review
   planning/       selection, grounding, PDDL, monitored execution
   repair/         failure certificates, repair agents, curator, versioning
-  knowledge/      UniDomain corpus, ontology, retrieval
-  llm/ interfaces/ observability/ evaluation/
-experiments/src/experiments/resym/   scenes, grounding assets, task models, ICRA protocol
+  retrieval/      UniDomain corpus, frozen ontologies, retrieval
+  llm/ interfaces/ observability/
+experiments/src/experiments/resym/   scenes, grounding assets, task models
 test/resym_test/                     core tests (host-runnable)
-test/experiments_test/resym/         scene and experiment tests (container)
+test/experiments_test/resym/         scene tests (container)
 ```
 
 ## First-time initialization
@@ -177,15 +179,16 @@ unmapped actions that still need platform integration.
 
 ## Running
 
-Common commands:
+`run_in_docker.sh` deploys the container and runs whatever command you give
+it; the command is an argument, not a built-in mode:
 
 ```bash
 # core tests
-./resym/scripts/run_in_docker.sh test -q /opt/cram/test/resym_test
-# real-model smoke episode
-./resym/scripts/run_in_docker.sh smoke --backends agentic-rag --template missing-close-operator --seed 1
-# E1/E2 experiments (require the checksum-matched frozen splits)
-./resym/scripts/run_in_docker.sh experiment
+./resym/scripts/run_in_docker.sh pytest -q /opt/cram/test/resym_test
+# the drawer demo
+./resym/scripts/run_in_docker.sh python -m experiments.resym.open_drawer apartment
+# anything that calls a real model needs the credentials forwarded
+./resym/scripts/run_in_docker.sh --with-llm-credentials python -m <module> [arguments]
 ```
 
 Run records (worlds, plans, patches, review evidence, full provenance) are

@@ -6,14 +6,13 @@ from __future__ import annotations
 
 import pytest
 
-from resym.core.grounding import GroundingFailure, GroundingFailureCode
-from resym.core.model import (
-    Literal,
-    Operator,
-    PredicateSymbol,
-    SymbolLibrary,
-    SymbolType,
+from resym.core.grounding_model import (
+    GroundingFailure,
+    GroundingFailureCode,
+    PredicateGroundingPlan,
 )
+from resym.core.symbols import Literal, Operator, PredicateSymbol, SymbolLibrary
+from resym.core.symbol_types import SymbolType
 from resym.planning.execution.engine import (
     ExecutionViolation,
     PlatformExecutionResult,
@@ -22,8 +21,6 @@ from resym.planning.execution.engine import (
     execute,
 )
 from resym.planning.pddl import GroundAction
-from resym.core.grounding import PredicateGroundingPlan
-from resym.platform.embodiment import EmbodimentProfile
 from resym.platform.grounding_context import EvaluationContext
 from resym.platform.universe import GroundedObject, ObjectUniverse
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
@@ -44,6 +41,9 @@ class RecordingRealization(PlatformSkillRealization):
 
     def __init__(self) -> None:
         self.applied = []
+
+    def available_capabilities(self, robot):
+        return frozenset()
 
     def execute(self, request, context, universe):
         self.applied.append(request)
@@ -79,10 +79,6 @@ def context() -> EvaluationContext:
     return EvaluationContext(
         world=None,
         robot=None,
-        profile=EmbodimentProfile(
-            name="stub",
-            capabilities=frozenset({CAPABILITY_UID}),
-        ),
         grounding_catalog=catalog,
     )
 

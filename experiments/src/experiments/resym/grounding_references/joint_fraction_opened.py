@@ -2,8 +2,7 @@
 True iff the articulated object's joint reached the opened-fraction threshold.
 """
 
-from resym.platform.articulation import articulation_connection
-from resym.platform.universe import joint_fraction
+from experiments.resym.articulation import articulation_connection, joint_fraction
 
 
 def evaluate(context, universe, arguments, parameters):

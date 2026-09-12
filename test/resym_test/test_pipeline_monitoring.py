@@ -10,19 +10,14 @@ from __future__ import annotations
 
 import pytest
 
-from resym.core.grounding import PredicateGroundingPlan
-from resym.platform.embodiment import EmbodimentProfile
+from resym.core.grounding_model import PredicateGroundingPlan
+from resym.core.symbols import Literal, Operator, PredicateSymbol, SymbolLibrary
+from resym.core.symbol_types import SymbolType
 from resym.platform.grounding_context import EvaluationContext
 from resym.planning.execution.engine import (
     ExecutionViolation,
     PlatformExecutionResult,
     PlatformSkillRealization,
-)
-from resym.core.model import (
-    Literal,
-    Operator,
-    PredicateSymbol,
-    SymbolLibrary,
 )
 from resym.planning.pipeline import (
     RepeatedFailedPlanError,
@@ -36,7 +31,6 @@ from semantic_digital_twin.world_description.world_entity import Body
 from .capability_helpers import capability_contract, execution_binding
 from .test_binary_grounding import STUB_CHECKSUM, catalog_with, factory_uid
 
-from resym.core.model import SymbolType
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
 
 ROBOT_TYPE = SymbolType.from_python_type(AbstractRobot)
@@ -61,6 +55,9 @@ class StubRealization(PlatformSkillRealization):
         self.actually_works = actually_works
         self.applied = []
 
+    def available_capabilities(self, robot):
+        return frozenset({CAPABILITY_UID})
+
     def execute(self, request, context, universe):
         self.applied.append(request)
         if self.actually_works:
@@ -69,6 +66,9 @@ class StubRealization(PlatformSkillRealization):
 
 
 class RejectingRealization(PlatformSkillRealization):
+    def available_capabilities(self, robot):
+        return frozenset({CAPABILITY_UID})
+
     def execute(self, request, context, universe):
         return PlatformExecutionResult.rejected(
             "NATIVE_PRECONDITION_FAILED", "target is no longer reachable"
@@ -76,6 +76,9 @@ class RejectingRealization(PlatformSkillRealization):
 
 
 class UnsupportedRealization(PlatformSkillRealization):
+    def available_capabilities(self, robot):
+        return frozenset({CAPABILITY_UID})
+
     def execute(self, request, context, universe):
         return PlatformExecutionResult.unsupported(
             "NATIVE_CAPABILITY_NOT_IMPLEMENTED", "no platform mapping"
@@ -138,13 +141,7 @@ def stub_context(stub_world):
     catalog = catalog_with(
         stub_done=lambda context, universe, arguments, parameters: stub_world.done
     )
-    profile = EmbodimentProfile(
-        name="stub",
-        capabilities=frozenset({CAPABILITY_UID}),
-    )
-    return EvaluationContext(
-        world=None, robot=None, profile=profile, grounding_catalog=catalog
-    )
+    return EvaluationContext(world=None, robot=None, grounding_catalog=catalog)
 
 
 def test_working_skill_passes_postcondition_and_goal_check(
@@ -160,6 +157,7 @@ def test_working_skill_passes_postcondition_and_goal_check(
         tmp_path,
         realization=backend,
         event_sink=lambda event, data: events.append((event, data)),
+        available_capabilities=frozenset({CAPABILITY_UID}),
     )
     assert result.goal_check is not None and result.goal_check.satisfied
     assert result.nogoods == []
@@ -189,6 +187,7 @@ def test_broken_skill_fails_postcondition_then_refuses_repeat(
             GOAL,
             tmp_path,
             realization=backend,
+            available_capabilities=frozenset({CAPABILITY_UID}),
         )
     assert len(backend.applied) == 1  # executed once, never repeated
     (nogood,) = error.value.nogoods
@@ -250,6 +249,7 @@ def test_goal_check_catches_what_disabled_postconditions_miss(
             tmp_path,
             realization=backend,
             check_postconditions=False,
+            available_capabilities=frozenset({CAPABILITY_UID}),
         )
     (nogood,) = error.value.nogoods
     assert nogood.violation is None
@@ -275,6 +275,7 @@ def test_fully_ablated_monitoring_reports_false_success(
         realization=backend,
         check_postconditions=False,
         verify_goal=False,
+        available_capabilities=frozenset({CAPABILITY_UID}),
     )
     assert result.goal_check.satisfied  # blind
     assert stub_world.done is False  # reality

@@ -24,27 +24,23 @@ from enum import Enum
 
 from typing_extensions import Optional
 
-from resym.knowledge.corpus import (
+from resym.retrieval.corpus import (
     DomainFragment,
     OperatorFragment,
     parse_operator_literals,
 )
-from resym.knowledge.retrieval import tokenize
-from resym.core.model import (
+from resym.retrieval.index import tokenize
+from resym.core.capability_model import (
     CapabilityContract,
-    Literal,
-    Operator,
     OperatorExecutionBinding,
-    PredicateGroundingPlan,
-    PredicateRef,
-    PredicateSymbol,
-    Provenance,
     RoleBinding,
-    SymbolLibrary,
-    SymbolType,
     contract_violations,
-    is_symbol_subtype,
 )
+from resym.core.grounding_model import PredicateGroundingPlan
+from resym.core.predicate_refs import PredicateRef
+from resym.core.provenance import Provenance
+from resym.core.symbols import Literal, Operator, PredicateSymbol, SymbolLibrary
+from resym.core.symbol_types import SymbolType, is_symbol_subtype
 
 
 class AdaptationIssueKind(Enum):
@@ -196,7 +192,9 @@ class PredicateBinding:
     """
 
     grounding_plan: Optional[PredicateGroundingPlan] = None
-    """Required factory binding when the alignment creates a predicate."""
+    """
+    Required factory binding when the alignment creates a predicate.
+    """
 
     fluent: bool = True
 
@@ -247,8 +245,8 @@ def adapt_operator(
     """
     Validate one alignment and construct the typed patch.
 
-    ``available_capabilities`` is what the current embodiment implements. All issue
-    kinds are collected instead of short-circuited.
+    ``available_capabilities`` is what the current CRAM robot and reviewed adapters
+    implement. All issue kinds are collected instead of short-circuited.
     """
     result = AdaptationResult()
     operator_fragment = _find_operator(fragment, alignment.fragment_operator)

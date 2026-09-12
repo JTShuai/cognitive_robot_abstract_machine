@@ -3,7 +3,7 @@ Pydantic schemas of everything a language model may hand back.
 
 These are the only Pydantic types in the project: they exist to validate model
 output at the boundary and convert immediately into the dataclass model of
-:mod:`resym.core.model`. Conversion assumes the gate has already
+:mod:`resym.core`. Conversion assumes the gate has already
 checked names and types; it raises on anything a gate would have rejected.
 """
 
@@ -15,18 +15,16 @@ from typing import Literal as TypingLiteral
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing_extensions import Optional
 
-from resym.core.model import (
+from resym.core.capability_model import (
     BindingSource,
     CapabilityRef,
-    Literal,
-    Operator,
     OperatorExecutionBinding,
-    PredicateGroundingPlan,
-    PredicateSymbol,
-    Provenance,
     RoleBinding,
-    SymbolType,
 )
+from resym.core.grounding_model import PredicateGroundingPlan
+from resym.core.provenance import Provenance
+from resym.core.symbols import Literal, Operator, PredicateSymbol
+from resym.core.symbol_types import SymbolType
 from resym.platform.krrood_queries import named_colors
 
 

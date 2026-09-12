@@ -41,6 +41,5 @@ Reply with ONLY a JSON document:
 
 {"status": "ready | model_gap | clarification_needed", "object_queries": [{"reference": "$$target", "type": "<listed Python type or null>", "color": "<named color or null>", "name_contains": "<text or null>"}], "literals": [{"predicate": "<existing-predicate>", "arguments": ["<listed-object-or-$$reference>", "..."], "negated": false}], "unresolved_literals": [{"suggested_predicate": "<missing-relation>", "arguments": ["<listed-object-or-$$reference>", "..."], "description": "<what must hold>", "negated": false}], "message": "<clarification question or empty string>"}
 
-The goal is the conjunction of all returned literals. Object names are derived
-from the scene; for example, `cabinet10-drawer-top` is the top drawer of cabinet
-10.
+The goal is the conjunction of all returned literals. Use only object names listed
+above or references declared in `object_queries`.

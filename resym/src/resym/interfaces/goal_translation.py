@@ -17,7 +17,8 @@ from pathlib import Path
 
 from typing_extensions import Optional
 
-from resym.core.model import Literal, SymbolLibrary, is_symbol_subtype
+from resym.core.symbols import Literal, SymbolLibrary
+from resym.core.symbol_types import is_symbol_subtype
 from resym.llm.prompting import render_predicates, render_prompt
 from resym.llm.schemas import GoalTranslation
 from resym.llm.structured import StructuredCompleter

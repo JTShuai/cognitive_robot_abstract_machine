@@ -4,8 +4,7 @@ Run one task to a verdict: success, or a structured failure certificate.
 Every way :func:`~resym.planning.pipeline.solve_task` can fail — the static capability
 gate, an unknown goal predicate, a planner-proved unsolvable task, an execution
 violation, a refused repeated plan — maps here onto the programmatic certificate
-builders, so callers (the fault diagnosis evaluation, and later the experiment harness)
-get one uniform outcome type instead of five exception paths.
+builders, so callers get one uniform outcome type instead of five exception paths.
 """
 
 from __future__ import annotations
@@ -15,7 +14,9 @@ from pathlib import Path
 
 from typing_extensions import Optional
 
-from resym.core.grounding import GroundingFailure
+from resym.core.grounding_model import GroundingFailure
+from resym.core.symbols import Literal, SymbolLibrary
+from resym.core.validation import InvalidSymbolLibraryError
 from resym.repair.certificate import (
     FailureCertificate,
     certify_grounding_factory_binding_error,
@@ -25,21 +26,17 @@ from resym.repair.certificate import (
     certify_unsolvable,
     certify_unsupported_capability,
 )
-from resym.core.validation import InvalidSymbolLibraryError
-from resym.platform.embodiment import (
-    InvalidGroundingFactoryBindingError,
-    UnsupportedCapabilityError,
-)
 from resym.platform.grounding_context import EvaluationContext
 from resym.planning.execution.engine import ExecutionReport
-from resym.planning.grounding import ground
-from resym.core.model import Literal, SymbolLibrary
+from resym.planning.state_evaluation import ground
 from resym.planning.pddl import PlanNotFoundError
 from resym.planning.pipeline import (
+    InvalidGroundingFactoryBindingError,
     Nogood,
     RepeatedFailedPlanError,
     ReplanningLimitExceededError,
     TaskResult,
+    UnsupportedCapabilityError,
     solve_task,
 )
 from resym.planning.selection import (

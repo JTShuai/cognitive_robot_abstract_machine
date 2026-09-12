@@ -16,7 +16,7 @@ from resym.platform.cram_objects import (
     SemanticAnnotationObjectExtractor,
 )
 from resym.platform.grounding_context import EvaluationContext
-from resym.platform.kinematic import KinematicFeasibility
+from experiments.resym.drawer_kinematic_oracle import DrawerExperimentFeasibility
 from resym.platform.universe import ObjectUniverse
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Drawer
 
@@ -61,9 +61,8 @@ def tracy_context(tracy_setup, grounding_catalog):
     return EvaluationContext(
         world=tracy_setup.world,
         robot=tracy_setup.robot,
-        profile=tracy_setup.profile,
         grounding_catalog=grounding_catalog,
-        capability_feasibility=KinematicFeasibility(),
+        capability_feasibility=DrawerExperimentFeasibility(),
     )
 
 
@@ -79,9 +78,8 @@ def apartment_context(apartment_setup, grounding_catalog):
     return EvaluationContext(
         world=apartment_setup.world,
         robot=apartment_setup.robot,
-        profile=apartment_setup.profile,
         grounding_catalog=grounding_catalog,
-        capability_feasibility=KinematicFeasibility(),
+        capability_feasibility=DrawerExperimentFeasibility(),
     )
 
 

@@ -27,23 +27,41 @@ complete result before producing a bounded model observation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import re
+
+from dataclasses import dataclass, field, replace
 
 from typing_extensions import Optional
 
 from krrood.adapters.json_serializer import to_json
-from resym.core.grounding import (
+from resym.core.capability_model import (
+    CapabilityContract,
+    CapabilityRole,
+    matching_capability_contracts,
+)
+from resym.platform.capability_contract_review import (
+    CapabilityContractCandidate,
+    DuplicateContractCandidateError,
+)
+from resym.platform.coraplex_realizations import (
+    ActionRealization,
+    DuplicateRealizationCandidateError,
+    ParameterSource,
+    ParameterSourceKind,
+    RealizationCandidate,
+)
+from resym.core.grounding_model import (
     GroundingFactoryCandidate,
     GroundingFactoryParameter,
     GroundingFactoryRole,
 )
+from resym.core.provenance import KnowledgeSource
+from resym.core.symbols import SymbolLibrary
+from resym.core.symbol_types import SymbolType
 from resym.repair.patch import ModelPatch
-from resym.core.model import SymbolLibrary, SymbolType
-from resym.platform.capabilities import matching_capability_contracts
 from resym.platform.grounding_catalog import (
     DuplicateGroundingFactoryCandidateError,
 )
-from resym.core.provenance import KnowledgeSource
 from resym.repair.backends import (
     BudgetExhaustedError,
     BudgetMeter,
@@ -59,7 +77,7 @@ from resym.repair.backends import (
     proposal_to_patch,
     render_fragments,
 )
-from resym.knowledge.retrieval import RetrievalQuery
+from resym.retrieval.index import RetrievalQuery
 from resym.llm.prompting import (
     render_capability_contracts,
     render_operators,
@@ -78,7 +96,7 @@ from resym.repair.agent_harness import (
     CapabilitySearchArguments,
     CapabilitySearchResult,
     CandidateResult,
-    EmbodimentResult,
+    RobotPlatformResult,
     EpisodeEventLog,
     FragmentArguments,
     GroundingCatalogResult,
@@ -292,10 +310,10 @@ class RetrievalAugmentedPlanningAgent(RepairBackend):
                 operators=operators,
             )
 
-        def inspect_embodiment_profile(
+        def inspect_robot_platform(
             arguments: NoArguments,
-        ) -> EmbodimentResult:
-            return EmbodimentResult(
+        ) -> RobotPlatformResult:
+            return RobotPlatformResult(
                 message=(
                     f"capabilities:\n{task.capability_listing}\n"
                     "grounding factories:\n"
@@ -646,14 +664,46 @@ class RetrievalAugmentedPlanningAgent(RepairBackend):
                     contract.uid for contract in matching_contracts
                 ),
             )
+            submitted, objections = _submit_realization_candidates(
+                task, arguments, matching_contracts, self.name
+            )
+            contract_ids, contract_objections = _submit_contract_candidate(
+                task, arguments, matching_contracts, self.name
+            )
+            objections = objections + contract_objections
+            gap = replace(
+                gap,
+                submitted_candidate_ids=tuple(submitted),
+                submitted_contract_candidate_ids=tuple(contract_ids),
+            )
             state.missing_execution_capability = gap
             return MissingExecutionCapabilityResult(
                 message=(
                     "recorded MissingExecutionCapability for review; no trusted "
                     "contract or Coraplex implementation was written"
+                    + (
+                        f"; {len(submitted)} realization candidate(s) queued for "
+                        "human review"
+                        if submitted
+                        else ""
+                    )
+                    + (
+                        f"; contract candidate {contract_ids[0]} queued for human "
+                        "review"
+                        if contract_ids
+                        else ""
+                    )
+                    + (
+                        "; candidate objections: " + "; ".join(objections)
+                        if objections
+                        else ""
+                    )
                 ),
                 recorded=True,
                 gap=to_json(gap),
+                submitted_candidate_ids=submitted,
+                submitted_contract_candidate_ids=contract_ids,
+                objections=objections,
             )
 
         def propose_grounding_factory_candidate(
@@ -756,11 +806,11 @@ class RetrievalAugmentedPlanningAgent(RepairBackend):
                     inspect_library,
                 ),
                 RepairTool(
-                    "inspect_embodiment_profile",
+                    "inspect_robot_platform",
                     "capabilities, contracts, and grounding factories of this platform",
                     NoArguments,
-                    EmbodimentResult,
-                    inspect_embodiment_profile,
+                    RobotPlatformResult,
+                    inspect_robot_platform,
                 ),
                 RepairTool(
                     "inspect_grounding_catalog",
@@ -1052,3 +1102,143 @@ def _predicates_of(task: RepairTask) -> str:
 
 def _operators_of(task: RepairTask) -> str:
     return render_operators(task.library)
+
+
+def _submit_realization_candidates(
+    task: RepairTask,
+    arguments: MissingExecutionCapabilityArguments,
+    matching_contracts: tuple[CapabilityContract, ...],
+    generated_by: str,
+) -> tuple[list[str], list[str]]:
+    """
+    Queue one realization candidate per cited action and matching contract, when the
+    report binds the action's parameters and the application holds a review queue.
+    """
+    if (
+        not arguments.proposed_parameter_sources
+        or not matching_contracts
+        or task.realization_candidate_sink is None
+    ):
+        return [], []
+    sources = tuple(
+        ParameterSource(item.parameter, ParameterSourceKind(item.kind), item.value)
+        for item in arguments.proposed_parameter_sources
+    )
+    submitted: list[str] = []
+    objections: list[str] = []
+    for source_id in arguments.candidate_realizations:
+        for contract in matching_contracts:
+            candidate = RealizationCandidate(
+                candidate_id=_realization_candidate_id(
+                    arguments.suggested_label, source_id
+                ),
+                action_source_id=source_id,
+                realization=ActionRealization(
+                    contract.uid,
+                    sources,
+                    required_resources=tuple(
+                        SymbolType(item) for item in arguments.required_resources
+                    ),
+                ),
+                generated_by=generated_by,
+                rationale=arguments.reason,
+            )
+            found = (
+                ()
+                if task.validate_realization_candidate is None
+                else task.validate_realization_candidate(candidate)
+            )
+            if found:
+                objections.extend(f"{candidate.candidate_id}: {item}" for item in found)
+                continue
+            try:
+                task.realization_candidate_sink(candidate)
+            except DuplicateRealizationCandidateError:
+                objections.append(
+                    f"{candidate.candidate_id}: already submitted; a new revision "
+                    "needs a new label"
+                )
+                continue
+            submitted.append(candidate.candidate_id)
+    return submitted, objections
+
+
+def _realization_candidate_id(label: str, source_id: str) -> str:
+    action = source_id.rsplit(".", 1)[-1]
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", label).strip("-") or "realization"
+    return f"{slug}--{action}"
+
+
+AGENT_TYPE_REFERENCE = (
+    "semantic_digital_twin.semantic_annotations.semantic_annotations.Agent"
+)
+"""
+Type of the actor role every contract carries.
+"""
+
+
+def _submit_contract_candidate(
+    task: RepairTask,
+    arguments: MissingExecutionCapabilityArguments,
+    matching_contracts: tuple[CapabilityContract, ...],
+    generated_by: str,
+) -> tuple[list[str], list[str]]:
+    """
+    Queue the contract a gap report describes, when no admitted contract covers the
+    effects and the application holds a contract review queue.
+    """
+    if matching_contracts or task.contract_candidate_sink is None:
+        return [], []
+    roles = [
+        CapabilityRole(
+            "actor", accepted_symbol_types=(SymbolType(AGENT_TYPE_REFERENCE),)
+        )
+    ]
+    for name, reference in arguments.required_roles.items():
+        if name == "actor":
+            continue
+        roles.append(
+            CapabilityRole(name, accepted_symbol_types=(SymbolType(reference),))
+        )
+    relation = re.sub(
+        r"[^a-z0-9]+", "_", arguments.suggested_label.rsplit(".", 1)[-1].lower()
+    ).strip("_")
+    candidate = CapabilityContractCandidate(
+        candidate_id=f"{_slug(arguments.suggested_label)}--contract",
+        contract=CapabilityContract(
+            uid="resym:" + _camel(arguments.suggested_label),
+            label=arguments.suggested_label,
+            roles=tuple(roles),
+            success_relation=f"{relation}({', '.join(role.name for role in roles)})",
+            verifiable_effects=tuple(arguments.desired_effects),
+        ),
+        action_source_ids=tuple(arguments.candidate_realizations),
+        generated_by=generated_by,
+        rationale=arguments.reason,
+    )
+    found = (
+        ()
+        if task.validate_contract_candidate is None
+        else task.validate_contract_candidate(candidate)
+    )
+    if found:
+        return [], [f"{candidate.candidate_id}: {item}" for item in found]
+    try:
+        task.contract_candidate_sink(candidate)
+    except DuplicateContractCandidateError:
+        return [], [
+            f"{candidate.candidate_id}: already submitted; a new revision needs a "
+            "new label"
+        ]
+    return [candidate.candidate_id], []
+
+
+def _slug(label: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", label).strip("-") or "capability"
+
+
+def _camel(label: str) -> str:
+    words = re.split(r"[^A-Za-z0-9]+", label.rsplit(".", 1)[-1])
+    return (
+        "".join(word[:1].upper() + word[1:] for word in words if word) or "Capability"
+    )

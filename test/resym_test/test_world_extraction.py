@@ -9,7 +9,7 @@ from semantic_digital_twin.world_description.world_entity import (
     SemanticAnnotation,
 )
 
-from resym.core.model import SymbolType
+from resym.core.symbol_types import SymbolType
 from resym.platform.cram_objects import (
     CramObjectCatalog,
     SemanticAnnotationObjectExtractor,

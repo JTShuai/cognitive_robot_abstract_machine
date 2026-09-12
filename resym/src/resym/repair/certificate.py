@@ -21,18 +21,18 @@ from enum import Enum
 
 from typing_extensions import Optional
 
-from resym.core.capabilities import BindingSource
-from resym.core.grounding import GroundingFailure
+from resym.core.capability_model import BindingSource
+from resym.core.grounding_model import GroundingFailure
+from resym.core.symbols import Literal, SymbolLibrary
+from resym.core.validation import ModelIssue, ModelIssueKind
 from resym.planning.execution.engine import (
     ExecutionReport,
     ExecutionViolation,
 )
-from resym.planning.grounding import GroundingResult
-from resym.core.model import Literal, SymbolLibrary
+from resym.planning.state_evaluation import GroundingResult
 from resym.planning.pddl import GroundAction
 from resym.planning.pipeline import Nogood
 from resym.planning.selection import Selection
-from resym.core.validation import ModelIssue, ModelIssueKind
 
 
 class FailureClass(Enum):
@@ -309,7 +309,7 @@ def _capability_effect_issues(
 
     This uses only the platform-independent semantic mapping stored in the
     capability contract.  It does not infer physical target values or consult
-    experiment ground truth.
+    external labels.
     """
     issues: list[tuple[str, str]] = []
     for operator in library.operators.values():

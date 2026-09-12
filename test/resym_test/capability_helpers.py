@@ -2,14 +2,14 @@
 Small constructors for capability-focused unit-test fixtures.
 """
 
-from resym.core.model import (
+from resym.core.capability_model import (
     CapabilityContract,
     CapabilityRef,
     CapabilityRole,
     OperatorExecutionBinding,
     RoleBinding,
-    SymbolType,
 )
+from resym.core.symbol_types import SymbolType
 
 
 def capability_contract(

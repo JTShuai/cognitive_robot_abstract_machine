@@ -12,7 +12,7 @@ from enum import StrEnum
 from typing_extensions import TYPE_CHECKING, Any, Callable, Optional, TypeAlias
 
 if TYPE_CHECKING:
-    from resym.core.model import Literal
+    from resym.core.symbols import Literal
     from resym.planning.pddl import GroundAction
 
 PipelineEventSink: TypeAlias = Callable[[str, dict[str, Any]], None]

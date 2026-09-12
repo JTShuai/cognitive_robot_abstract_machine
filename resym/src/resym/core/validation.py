@@ -7,9 +7,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from resym.core.capabilities import BindingSource
+from resym.core.capability_model import BindingSource
 from resym.core.symbols import Operator, SymbolLibrary
-from resym.core.types import SymbolType, is_symbol_subtype
+from resym.core.symbol_types import SymbolType, is_symbol_subtype
 
 
 class ModelIssueKind(StrEnum):

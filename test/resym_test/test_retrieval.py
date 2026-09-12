@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from resym.knowledge.corpus import DomainFragment
-from resym.knowledge.retrieval import (
+from resym.retrieval.corpus import DomainFragment
+from resym.retrieval.index import (
     FragmentIndex,
     RetrievalConfig,
     RetrievalQuery,
@@ -22,7 +22,7 @@ RELEASE = Path(__file__).resolve().parent.parent / "corpus_release" / "r1"
 
 
 def fragment(fragment_id: str, predicates: dict[str, str], operators: dict[str, str]):
-    from resym.knowledge.corpus import (
+    from resym.retrieval.corpus import (
         _parse_operator,
         _parse_predicate,
     )
@@ -185,7 +185,7 @@ def test_query_from_certificate_shape():
 
 @pytest.mark.skipif(not RELEASE.exists(), reason="corpus release r1 not built")
 def test_real_release_smoke():
-    from resym.knowledge.freeze import load_release
+    from resym.retrieval.freeze import load_release
 
     fragments = load_release(RELEASE)
     index = FragmentIndex(fragments)

@@ -68,14 +68,14 @@ A propose_patch call for a new operator must carry the complete definition:
     "grounding_plan": {"factory_uid": "<reviewed factory>", "approved_factory_checksum": "<catalog checksum>", "role_bindings": {"<role>": 0}}}],
   "operators": [{
     "name": "...",
-    "parameters": [{"variable": "d", "type": "<type>"}],
-    "preconditions": [{"predicate": "...", "arguments": ["d"], "negated": false}],
-    "add_effects": [{"predicate": "...", "arguments": ["d"], "negated": false}],
+    "parameters": [{"variable": "x", "type": "<type>"}],
+    "preconditions": [{"predicate": "...", "arguments": ["x"], "negated": false}],
+    "add_effects": [{"predicate": "...", "arguments": ["x"], "negated": false}],
     "delete_effects": [],
     "capability_uid": "resym:...",
     "capability_version": "1",
-    "role_bindings": {"patient": "d"},
-    "constant_bindings": {"target_state": "OPEN"}
+    "role_bindings": {"<object-role>": "x"},
+    "constant_bindings": {"<constant-role>": "<allowed-value>"}
   }]
 }}}
 For a new predicate, bind an approved factory from the catalog with `grounding_plan`.
@@ -93,37 +93,10 @@ realized for the bound objects, so it is the binding for a predicate that states
 platform is able to act, not one that states a world state.
 When the predicate realizes an effect a capability contract lists by stable id, also set
 `uid` to that id so the alignment survives a different local name.
-When correcting an existing operator, send only its name and changed fields.
-For example, an effect-only correction is:
-{"tool": "propose_patch", "arguments": {"proposal": {
-  "rationale": "correct only the effects; preserve parameters, preconditions, and binding",
-  "operators": [{
-    "name": "open-drawer",
-    "add_effects": [{"predicate": "opened", "arguments": ["d"], "negated": false}],
-    "delete_effects": [{"predicate": "closed", "arguments": ["d"], "negated": false}]
-  }]
-}}}
-For a precondition correction, edit individual literals so unrelated safety
-conditions remain intact:
-{"tool": "propose_patch", "arguments": {"proposal": {
-  "rationale": "replace only the inverted state condition",
-  "operators": [{
-    "name": "open-drawer",
-    "precondition_edits": {
-      "remove": [{"predicate": "opened", "arguments": ["d"], "negated": false}],
-      "add": [{"predicate": "closed", "arguments": ["d"], "negated": false}]
-    }
-  }]
-}}}
-For a parameter type correction, edit the named parameter without replacing
-the complete parameter list:
-{"tool": "propose_patch", "arguments": {"proposal": {
-  "rationale": "correct only the handle parameter type",
-  "operators": [{
-    "name": "open-drawer",
-    "parameter_type_edits": {"h": "<handle type>"}
-  }]
-}}}
+When correcting an existing operator, send only its name and changed fields. Use
+literal-level edit objects to preserve unrelated preconditions and effects, and use
+`parameter_type_edits` to change individual parameter types without replacing the
+complete signature.
 Omitted fields of an existing operator are preserved exactly. An explicit
 empty list clears that field. The same literal-level edit form is available as
 `add_effect_edits` and `delete_effect_edits`. Propose only symbols that must be
@@ -150,8 +123,17 @@ added or modified; omit unchanged symbols.
 - If the required effects have no published capability contract, call
   `report_missing_execution_capability`. Suggest a semantic label and roles,
   and cite only discovered Coraplex `source_id` values as realization
-  candidates. This creates a reviewable gap report; it does not write a
-  contract or executable code.
+  candidates. This creates a reviewable gap report and, where the application
+  keeps a contract review queue, a contract candidate built from your label,
+  roles and effects; it does not write executable code, and nothing is admitted
+  until a reviewer approves it.
+- If a published contract covers the effects but the platform reported the
+  capability as unsupported, call the same tool with
+  `proposed_parameter_sources`: for each parameter of the cited action, bind it
+  to a contract role (`kind: role`, `value: <role name>`), to a context value
+  (`kind: context`, `value: manipulation_arm` or `default_grasp`), or to a
+  constant (`kind: constant`). This queues a realization candidate for human
+  review; nothing executes until a reviewer approves it.
 - Correct an existing operator with a partial update. Use
   `parameter_type_edits` for individual parameter types; a `parameters` list
   replaces the complete signature. Do not repeat unchanged preconditions or

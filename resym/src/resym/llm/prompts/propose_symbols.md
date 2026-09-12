@@ -63,16 +63,6 @@ Reply with ONLY a JSON document of this shape:
     "capability_uid": "resym:...",
     "capability_version": "1",
     "role_bindings": {"actor": "r"},
-    "constant_bindings": {"target_state": "OPEN"}
-  }]
-}
-
-For an effect-only correction to an existing operator, prefer:
-{
-  "rationale": "correct the effects without changing safety preconditions",
-  "operators": [{
-    "name": "open-drawer",
-    "add_effects": [{"predicate": "opened", "arguments": ["d"], "negated": false}],
-    "delete_effects": [{"predicate": "closed", "arguments": ["d"], "negated": false}]
+    "constant_bindings": {"<constant-role>": "<allowed-value>"}
   }]
 }

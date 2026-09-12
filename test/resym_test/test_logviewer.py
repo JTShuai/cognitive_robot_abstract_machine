@@ -14,22 +14,18 @@ import pytest
 
 pytest.importorskip("flask")
 
-from resym.core.model import (  # noqa: E402
+from resym.core.capability_model import (
     CapabilityContract,
     CapabilityRef,
     CapabilityRole,
-    Literal,
-    OntologyAlignment,
-    Operator,
     OperatorExecutionBinding,
-    PredicateRef,
-    PredicateGroundingPlan,
-    PredicateSymbol,
-    Provenance,
     RoleBinding,
-    SymbolLibrary,
-    TruthProcedureRef,
 )
+from resym.core.grounding_model import PredicateGroundingPlan
+from resym.core.predicate_refs import PredicateRef, TruthProcedureRef
+from resym.core.provenance import OntologyAlignment, Provenance
+from resym.core.symbols import Literal, Operator, PredicateSymbol, SymbolLibrary
+from resym.core.symbol_types import SymbolType
 from resym.observability.viewer import create_app  # noqa: E402
 from resym.observability.runlog import RunRecorder  # noqa: E402
 from resym.platform.grounding_catalog import (  # noqa: E402
@@ -39,7 +35,6 @@ from resym.platform.grounding_catalog import (  # noqa: E402
 from .grounding_helpers import STUB_GROUNDING_PLAN  # noqa: E402
 from .test_grounding_factory_catalog import candidate, vocabulary  # noqa: E402
 
-from resym.core.model import SymbolType
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Drawer
 
 DRAWER_TYPE = SymbolType.from_python_type(Drawer)
@@ -241,12 +236,14 @@ def test_empty_runs_root(tmp_path):
 
 def _seed_experiment_run(root):
     """
-    A run directory shaped like experiments.resym.icra.run output.
+    A run directory shaped like an experiment report run.
     """
     import json
 
     recorder = RunRecorder.create("e1e2", root=root)
-    recorder.record_episode(
+    recorder.append_jsonl(
+        "D_experiment",
+        "episodes.jsonl",
         {
             "backend": "oracle-reference",
             "template_id": "missing-close-operator",
@@ -258,9 +255,11 @@ def _seed_experiment_run(root):
             "budget": {"candidates_used": 1, "estimated_tokens_used": 0},
             "admission_evidence": {"static_objections": []},
             "events": [],
-        }
+        },
     )
-    recorder.record_episode(
+    recorder.append_jsonl(
+        "D_experiment",
+        "episodes.jsonl",
         {
             "backend": "repair-agent",
             "template_id": "missing-close-operator",
@@ -271,7 +270,7 @@ def _seed_experiment_run(root):
             "false_admission": False,
             "budget": {},
             "events": [{"step": "infrastructure", "error": "RateLimitError: 429"}],
-        }
+        },
     )
     directory = recorder.directory
     (directory / "e1_report.txt").write_text("E1: matched-budget executable repair\n")
@@ -410,7 +409,9 @@ def test_episode_browser_groups_cases_with_facets(tmp_path):
             ("missing-close-operator", "D1", 11),
             ("inverted-precondition", "D2", 22),
         ):
-            recorder.record_episode(
+            recorder.append_jsonl(
+                "D_experiment",
+                "episodes.jsonl",
                 {
                     "backend": backend,
                     "template_id": template,
@@ -424,7 +425,7 @@ def test_episode_browser_groups_cases_with_facets(tmp_path):
                     "false_admission": False,
                     "budget": {"estimated_tokens_used": 1234},
                     "events": [],
-                }
+                },
             )
     recorder.transcript_path.write_text(
         '{"agent_name":"symbol-proposer","model":"m","attempt":1,'
@@ -569,17 +570,54 @@ def test_system_library_page_renders_readably(tmp_path):
     assert "Operator execution bindings" in body
 
 
-def test_capability_catalog_page_shows_contract_realization_action_hierarchy(tmp_path):
+def capability_catalog_client(tmp_path, library_json: dict | None = None):
+    """
+    A viewer over a library carrying the dataset contracts and a workspace admitting the
+    dataset realizations, plus an optional shipped library file.
+    """
+    from resym.core.symbols import SymbolLibrary
+
+    from .dataset.capability_model import (
+        bootstrap_capability_realizations,
+        capability_contracts,
+    )
+
     runs = tmp_path / "runs"
-    runs.mkdir()
-    body = create_app(runs).test_client().get("/capabilities").get_data(as_text=True)
+    runs.mkdir(exist_ok=True)
+    library_dir = tmp_path / "library"
+    library_dir.mkdir(exist_ok=True)
+    contracts = SymbolLibrary()
+    for contract in capability_contracts():
+        contracts.add_capability_contract(contract)
+    contracts.save(library_dir / "contracts.json")
+    if library_json is not None:
+        (library_dir / "seed_library.json").write_text(
+            json.dumps(library_json), encoding="utf-8"
+        )
+    initialization = bootstrap_capability_realizations(tmp_path / "realizations")
+    workspace_root = tmp_path / "realizations"
+    from resym.platform.coraplex_realizations import CoraplexRealizationWorkspace
+
+    return (
+        create_app(
+            runs,
+            library_dir=library_dir,
+            realization_workspace=CoraplexRealizationWorkspace(workspace_root),
+        ).test_client(),
+        len(initialization.contracts),
+    )
+
+
+def test_capability_catalog_page_shows_contract_realization_action_hierarchy(tmp_path):
+    client, contract_count = capability_catalog_client(tmp_path)
+    body = client.get("/capabilities").get_data(as_text=True)
 
     assert "Coraplex capability catalog" in body
-    assert "contracts</b>: 20" in body
+    assert f"contracts</b>: {contract_count}" in body
     assert "resym:ArticulationStateChange" in body
     assert "OpenAction" in body
     assert "task-required" in body
-    assert "adapter ready</b>: 20" in body
+    assert f"adapter ready</b>: {contract_count}" in body
     assert "CapabilityContract" in body
     assert "implemented by" in body  # native realization row on each card
 
@@ -716,9 +754,8 @@ def test_capability_catalog_page_explains_the_chain_and_anchors_contracts(tmp_pa
     The anatomy strip names every concept from predicate to adapter, and each contract
     card carries a stable anchor for cross-page links.
     """
-    runs = tmp_path / "runs"
-    runs.mkdir()
-    body = create_app(runs).test_client().get("/capabilities").get_data(as_text=True)
+    client, _ = capability_catalog_client(tmp_path)
+    body = client.get("/capabilities").get_data(as_text=True)
 
     assert "How the pieces connect" in body
     assert "ExecutionRequest" in body  # the run-time lane of the anatomy
@@ -816,9 +853,8 @@ def test_capability_catalog_groups_contracts_and_labels_every_field(tmp_path):
     Cards are grouped by activity category and every field says what it is, so a reader
     never has to guess whether a string is a name or an id.
     """
-    runs = tmp_path / "runs"
-    runs.mkdir()
-    body = create_app(runs).test_client().get("/capabilities").get_data(as_text=True)
+    client, _ = capability_catalog_client(tmp_path)
+    body = client.get("/capabilities").get_data(as_text=True)
 
     assert "Moving around" in body  # navigation.* group
     assert "Handling objects" in body  # manipulation.* group
@@ -830,17 +866,10 @@ def test_capability_catalog_groups_contracts_and_labels_every_field(tmp_path):
 
 
 def test_capability_catalog_page_lists_operators_bound_to_each_contract(tmp_path):
-    runs = tmp_path / "runs"
-    runs.mkdir()
-    library_dir = tmp_path / "library"
-    library_dir.mkdir()
     library = json.loads(json.dumps(_LIBRARY))
     binding = library["operators"][0]["execution_binding"]
     binding["capability_ref"]["uid"] = "resym:ArticulationStateChange"
-    (library_dir / "seed_library.json").write_text(
-        json.dumps(library), encoding="utf-8"
-    )
-    client = create_app(runs, library_dir=library_dir).test_client()
+    client, _ = capability_catalog_client(tmp_path, library)
     body = client.get("/capabilities").get_data(as_text=True)
 
     assert "open-drawer (seed_library)" in body
@@ -1161,3 +1190,127 @@ def test_long_prompt_folds_into_sections_with_change_badges(tmp_path):
     assert "2 changed since the previous turn" not in page  # only 1 changed
     assert "1 changed since the previous turn" in page
     assert "full raw prompt" in page
+
+
+def test_capability_page_reviews_a_realization_candidate(tmp_path):
+    from .dataset.capability_model import PLACE_CAPABILITY_UID, capability_contracts
+    from resym.platform.coraplex_realizations import (
+        ActionRealization,
+        CapabilityReviewStatus,
+        ContextValue,
+        CoraplexRealizationWorkspace,
+        ParameterSource,
+        ParameterSourceKind,
+        RealizationCandidate,
+    )
+
+    workspace = CoraplexRealizationWorkspace(tmp_path / "realizations")
+    workspace.submit(
+        RealizationCandidate(
+            candidate_id="place-by-place-action",
+            action_source_id="coraplex:robot_plans.actions.core.placing.place-action",
+            realization=ActionRealization(
+                PLACE_CAPABILITY_UID,
+                (
+                    ParameterSource(
+                        "object_designator", ParameterSourceKind.ROLE, "patient"
+                    ),
+                    ParameterSource(
+                        "target_location", ParameterSourceKind.ROLE, "destination"
+                    ),
+                    ParameterSource(
+                        "arm",
+                        ParameterSourceKind.CONTEXT,
+                        ContextValue.MANIPULATION_ARM,
+                    ),
+                ),
+            ),
+            generated_by="agent",
+            rationale="PlaceAction puts the patient at the destination",
+        )
+    )
+    from resym.core.symbols import SymbolLibrary
+
+    library_dir = tmp_path / "library"
+    library_dir.mkdir()
+    shipped = SymbolLibrary()
+    for contract in capability_contracts():
+        shipped.add_capability_contract(contract)
+    shipped.save(library_dir / "task.json")
+    client = create_app(
+        tmp_path / "runs",
+        library_dir=library_dir,
+        realization_workspace=workspace,
+    ).test_client()
+
+    pending = client.get("/capabilities").get_data(as_text=True)
+    assert "Realization candidates" in pending
+    assert "place-by-place-action" in pending
+    assert "Approve realization" in pending
+    assert "adapter ready</b>: 0" in pending  # nothing reviewed in this workspace yet
+
+    response = client.post(
+        "/capabilities/realizations/place-by-place-action/approve",
+        data={"reviewer": "tester"},
+    )
+    assert response.status_code == 302
+
+    (candidate,) = workspace.candidates()
+    assert candidate.review_status is CapabilityReviewStatus.APPROVED
+    assert candidate.reviewed_by == "tester"
+    reviewed = client.get("/capabilities").get_data(as_text=True)
+    assert "Approve realization" not in reviewed
+    assert "adapter ready</b>: 1" in reviewed
+
+
+def test_capability_page_reviews_a_contract_candidate(tmp_path):
+    from resym.core.capability_model import CapabilityContract, CapabilityRole
+    from resym.platform.capability_contract_review import (
+        CapabilityContractCandidate,
+        CapabilityContractWorkspace,
+    )
+    from resym.platform.coraplex_realizations import CapabilityReviewStatus
+
+    from .dataset.capability_model import OBJECT_TYPE
+
+    workspace = CapabilityContractWorkspace(tmp_path / "contracts")
+    workspace.submit(
+        CapabilityContractCandidate(
+            candidate_id="stacking-contract",
+            contract=CapabilityContract(
+                uid="resym:ObjectStacking",
+                label="manipulation.stack",
+                roles=(
+                    CapabilityRole("actor", accepted_symbol_types=(OBJECT_TYPE,)),
+                    CapabilityRole("patient", accepted_symbol_types=(OBJECT_TYPE,)),
+                    CapabilityRole("support", accepted_symbol_types=(OBJECT_TYPE,)),
+                ),
+                success_relation="stacked_on(patient, support)",
+                verifiable_effects=("stacked-on",),
+            ),
+            action_source_ids=(
+                "coraplex:robot_plans.actions.core.placing.place-action",
+            ),
+            generated_by="agent",
+            rationale="placing on top of a support stacks the patient",
+        )
+    )
+    client = create_app(tmp_path / "runs", contract_workspace=workspace).test_client()
+
+    pending = client.get("/capabilities").get_data(as_text=True)
+    assert "Contract candidates" in pending
+    assert "stacking-contract" in pending
+    assert "Approve contract" in pending
+    assert "contracts</b>: 0" in pending  # nothing admitted, no library files
+
+    response = client.post(
+        "/capabilities/contracts/stacking-contract/approve", data={"reviewer": "tester"}
+    )
+    assert response.status_code == 302
+
+    (candidate,) = workspace.candidates()
+    assert candidate.review_status is CapabilityReviewStatus.APPROVED
+    reviewed = client.get("/capabilities").get_data(as_text=True)
+    assert "Approve contract" not in reviewed
+    assert "contracts</b>: 1" in reviewed
+    assert "resym:ObjectStacking" in reviewed

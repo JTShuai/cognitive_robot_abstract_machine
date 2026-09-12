@@ -18,11 +18,12 @@ from resym.interfaces.goal_translation import (
     UntranslatableGoalError,
     diagnose_instruction,
 )
-from resym.knowledge.retrieval import RetrievalQuery
+from resym.retrieval.index import RetrievalQuery
 from resym.llm.client import ScriptedCompletionClient
 from resym.llm.structured import StructuredCompleter
 from resym.llm.transcript import TranscriptRecorder
-from resym.core.model import PredicateSymbol, SymbolType
+from resym.core.symbols import PredicateSymbol
+from resym.core.symbol_types import SymbolType
 from resym.platform.universe import GroundedObject, ObjectUniverse
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Cup

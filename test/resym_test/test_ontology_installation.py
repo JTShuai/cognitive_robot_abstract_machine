@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from resym.knowledge.ontology_installation import (
+from resym.retrieval.ontology_installation import (
     DownloadedOntologyHashError,
     OntologyInstaller,
 )

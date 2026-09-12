@@ -13,15 +13,11 @@ from dataclasses import dataclass, field
 
 from typing_extensions import TYPE_CHECKING, Iterable, Protocol, Self
 
-from resym.core.model import (
-    SymbolType,
-    is_symbol_subtype,
-)
+from resym.core.symbol_types import SymbolType, is_symbol_subtype
 
 if TYPE_CHECKING:
     from semantic_digital_twin.robots.robot_parts import AbstractRobot
     from semantic_digital_twin.world import World
-    from semantic_digital_twin.world_description.connections import ActiveConnection1DOF
     from semantic_digital_twin.world_description.world_entity import Body
 
 
@@ -163,26 +159,3 @@ def pddl_name(raw: str) -> str:
     if not sanitized:
         raise ValueError(f"Cannot derive a PDDL name from '{raw}'.")
     return sanitized
-
-
-def joint_fraction(connection: ActiveConnection1DOF) -> float:
-    """
-    Normalized joint position in [0, 1] of a 1-DOF connection.
-    """
-    limits = connection.dof.limits
-    return (connection.position - limits.lower.position) / (
-        limits.upper.position - limits.lower.position
-    )
-
-
-def set_joint_fraction(connection: ActiveConnection1DOF, fraction: float) -> None:
-    """
-    Move a 1-DOF connection to a fraction of its range.
-
-    The CRAM position setter applies the connection's multiplier/offset and notifies the
-    world of the state change itself.
-    """
-    limits = connection.dof.limits
-    connection.position = limits.lower.position + fraction * (
-        limits.upper.position - limits.lower.position
-    )

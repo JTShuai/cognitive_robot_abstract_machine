@@ -22,18 +22,13 @@ from resym.repair.patch import (
     contract_scorer_for,
     suggest_alignment,
 )
-from resym.knowledge.corpus import load_fragment
-from resym.core.model import (
-    Literal,
-    Operator,
-    PredicateSymbol,
-    Provenance,
-    SymbolLibrary,
-)
+from resym.retrieval.corpus import load_fragment
+from resym.core.provenance import Provenance
+from resym.core.symbols import Literal, Operator, PredicateSymbol, SymbolLibrary
+from resym.core.symbol_types import SymbolType
 from .capability_helpers import capability_contract, execution_binding
 from .grounding_helpers import STUB_GROUNDING_PLAN
 
-from resym.core.model import SymbolType
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Drawer
 

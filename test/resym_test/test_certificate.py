@@ -12,7 +12,10 @@ from dataclasses import replace
 from krrood.adapters.json_serializer import to_json
 
 from .grounding_helpers import STUB_GROUNDING_PLAN
-from resym.core.grounding import GroundingFailure, GroundingFailureCode
+from resym.core.grounding_model import GroundingFailure, GroundingFailureCode
+from resym.core.symbols import Literal, Operator, PredicateSymbol, SymbolLibrary
+from resym.core.symbol_types import SymbolType
+from resym.core.validation import ModelIssueKind, selection_model_issues
 from resym.repair.certificate import (
     CURATION_TRIGGERS,
     FailureClass,
@@ -27,23 +30,12 @@ from resym.planning.execution.engine import (
     ExecutionViolation,
     PlatformExecutionResult,
 )
-from resym.planning.grounding import GroundingResult
-from resym.core.model import (
-    Literal,
-    Operator,
-    PredicateSymbol,
-    SymbolLibrary,
-)
+from resym.planning.state_evaluation import GroundingResult
 from .capability_helpers import execution_binding
 from resym.planning.pddl import GroundAction
 from resym.planning.selection import Selection
 from resym.planning.selection import select_for_goal
-from resym.core.validation import (
-    ModelIssueKind,
-    selection_model_issues,
-)
 
-from resym.core.model import SymbolType
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Drawer
 
@@ -332,7 +324,7 @@ def test_unresolvable_type_reference_is_reported_as_such():
     original = library.operators["open-drawer"]
     library.operators["open-drawer"] = Operator(
         name=original.name,
-        parameters=(("d", SymbolType("semantic_digital_twin:NoSuchClass")),),
+        parameters=(("d", SymbolType("semantic_digital_twin.NoSuchClass")),),
         preconditions=original.preconditions,
         add_effects=original.add_effects,
         delete_effects=original.delete_effects,

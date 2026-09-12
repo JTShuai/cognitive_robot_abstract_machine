@@ -29,7 +29,7 @@ from pathlib import Path
 
 from typing_extensions import Optional
 
-from resym.core.model import SymbolLibrary
+from resym.core.symbols import SymbolLibrary
 
 
 class UnknownVersionError(Exception):

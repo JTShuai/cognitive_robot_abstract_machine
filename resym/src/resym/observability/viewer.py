@@ -1,16 +1,17 @@
-"""A small web viewer for the per-run stage logs written by :mod:`runlog`.
+"""
+A small web viewer for the per-run stage logs written by :mod:`runlog`.
 
-It only reads a runs root (default ``runs/``, or ``$RESYM_RUNS_DIR``) and serves
-a browsable UI: an index of runs, and per-run pages grouped by pipeline stage
-(A_world / B_repair / C_solve). Known artifacts get purpose-built, compact
-renderings (object domains collapse to a per-type summary, LLM prompts/responses
-wrap and fold, task results show plan + verdict + metrics); anything unfamiliar
-falls back to pretty JSON, so it keeps working when demos add new artifacts.
+It only reads a runs root (default ``runs/``, or ``$RESYM_RUNS_DIR``) and serves a
+browsable UI: an index of runs, and per-run pages grouped by pipeline stage (A_world /
+B_repair / C_solve). Known artifacts get purpose-built, compact renderings (object
+domains collapse to a per-type summary, LLM prompts/responses wrap and fold, task
+results show plan + verdict + metrics); anything unfamiliar falls back to pretty JSON,
+so it keeps working when demos add new artifacts.
 
 The viewer needs nothing from the CRAM stack, so it runs on the host:
 
-    uv run --extra viewer python -m resym.observability.viewer runs/
-    uv run --extra viewer python -m resym.observability.viewer --port 8000
+uv run --extra viewer python -m resym.observability.viewer runs/ uv run --extra viewer
+python -m resym.observability.viewer --port 8000
 """
 
 from __future__ import annotations
@@ -28,9 +29,25 @@ from pathlib import Path
 
 from flask import Flask, abort, redirect, request, send_file, url_for
 
-from resym.core.grounding import GroundingFactoryCandidate, GroundingFactorySpec
+from resym.core.grounding_model import GroundingFactoryCandidate, GroundingFactorySpec
 from resym.observability.i18n import to_chinese
 from resym.planning.events import PipelineEvent
+from krrood.adapters.json_serializer import from_json
+from resym.core.capability_model import CapabilityContract
+from resym.platform.capability_contract_review import (
+    CapabilityContractCandidate,
+    CapabilityContractWorkspace,
+)
+from resym.platform.coraplex_catalog import (
+    approve_realization_candidate,
+    discover_coraplex_capability_contract_drafts,
+    initialize_coraplex_capabilities,
+)
+from resym.platform.coraplex_realizations import (
+    CapabilityReviewStatus,
+    CoraplexRealizationWorkspace,
+    RealizationCandidate,
+)
 from resym.platform.grounding_catalog import (
     GroundingFactoryCatalog,
     GroundingFactoryWorkspace,
@@ -43,7 +60,6 @@ STAGE_TITLES = {
     "A_world": "Stage A · world",
     "B_repair": "Stage B · repair process",
     "C_solve": "Stage C · task solve",
-    "D_experiment": "Stage D · experiment results",
     "D_visualization": "Stage D · visualization",
 }
 
@@ -68,20 +84,16 @@ PIPELINE_STEPS = (
         "always",
     ),
     (
-        "D_experiment",
-        "D · Experiment",
-        "Episode records and admission decisions.",
-        None,
-    ),
-    (
         "D_visualization",
         "D · Visualization",
         "RViz recording of the execution.",
         None,
     ),
 )
-"""The pipeline map at the top of a run page: (stage dir, label, what it
-does, and what an absent stage means — None hides absent stages)."""
+"""
+The pipeline map at the top of a run page: (stage dir, label, what it does, and what an
+absent stage means — None hides absent stages).
+"""
 
 FILE_EXPLAINERS = {
     "events.jsonl": "stage log — timestamped events this stage emitted",
@@ -94,18 +106,14 @@ FILE_EXPLAINERS = {
     "llm_transcript.jsonl": (
         "the LLM call log — every prompt and reply, kept as the audit trail"
     ),
-    "episodes.jsonl": "experiment episodes — one record per repair attempt",
-    "e2_decisions.jsonl": "admission decisions — one per candidate patch and policy",
-    "e1_summary.json": "E1 outcome rates per repair backend",
-    "e1_report.txt": "pre-registered E1 report",
-    "e2_report.txt": "pre-registered E2 report",
-    "gate_p2.txt": "Gate P2 decision — the pre-registered claim check",
     "provenance.json": "reproducibility record — code version and command line",
     "source.patch": "uncommitted changes at run time (empty when the tree was clean)",
     "rviz_recording.json": "video recording metadata",
     "ffmpeg.log": "video encoder log",
 }
-"""One-line identity for known artifact names, shown next to the filename."""
+"""
+One-line identity for known artifact names, shown next to the filename.
+"""
 
 STAGE_EXPLAINERS = {
     "A_world": (
@@ -115,25 +123,21 @@ STAGE_EXPLAINERS = {
     "B_repair": (
         "The repair process, recorded raw: the LLM call log keeps every "
         "prompt, reply, and retry. This is the how — what became of each "
-        "proposal (admitted or not, correct or not) is settled in Stage D."
+        "proposal is settled by the curator and recorded with the run."
     ),
     "C_solve": (
         "One folder per task (named scene_task, e.g. apartment_open): the "
         "goal, the generated PDDL, the plan, and the execution trace."
     ),
-    "D_experiment": (
-        "The results ledger: one settled verdict per episode — which "
-        "backend, which fault case, whether its repair was admitted and "
-        "correct, and what it cost. The summary reports above are computed "
-        "from these rows; the conversations behind them live in Stage B."
-    ),
     "D_visualization": "RViz recordings of the execution.",
 }
 
-WORKING_DIR_NAMES = {"work", "e2", "versions", "held_out", "admission", "proposal"}
-"""Per-episode working trees (probe outputs, version stores, suite
-scratch): thousands of intermediate files that would swamp the page, so
-the run view names them instead of rendering them."""
+WORKING_DIR_NAMES = {"work", "versions", "held_out", "admission", "proposal"}
+"""
+Per-episode working trees (probe outputs, version stores, suite scratch): thousands of
+intermediate files that would swamp the page, so the run view names them instead of
+rendering them.
+"""
 
 _STYLE = """
 :root{--bg:#f5f6f8;--fg:#1f2430;--muted:#6b7280;--line:#e3e6ea;--accent:#2563eb;
@@ -375,6 +379,8 @@ def create_app(
     library_dir: Path | None = None,
     grounding_workspace: GroundingFactoryWorkspace | None = None,
     grounding_vocabulary: GroundingVocabulary | None = None,
+    realization_workspace: CoraplexRealizationWorkspace | None = None,
+    contract_workspace: CapabilityContractWorkspace | None = None,
 ) -> Flask:
     runs_root = runs_root.resolve()
     if library_dir is not None:
@@ -486,7 +492,7 @@ def create_app(
             "missing or wrong symbol makes a task fail. This viewer shows "
             "everything the pipeline records: the symbol libraries it "
             "plans with, each run's plan and execution trace, and the "
-            "repair experiments with their admission decisions.</p></div>"
+            "repair decisions and provenance.</p></div>"
             "<div class=navcards>"
             f"<a class=navcard href='{url_for('latest_live')}'><b>⚡ Live execution</b>"
             "<span>Follow the most recent task as it runs: grounding "
@@ -503,13 +509,12 @@ def create_app(
             f"{grounding_card}"
             f"<a class=navcard href='{url_for('run_page', name=latest.name)}'><b>🕐 Latest run</b>"
             f"<span><code>{html.escape(latest.name)}</code> — its goal, "
-            "artifacts, and (for experiments) the admission results.</span></a>"
+            "artifacts and admission results.</span></a>"
             "</div>",
             _section(
                 "Runs",
-                "Every recorded run, newest first — demos and experiments "
-                "alike. Open one for its artifacts, execution trace, and "
-                "the libraries it used.",
+                "Every recorded run, newest first. Open one for its artifacts, "
+                "execution trace, and the libraries it used.",
             ),
         ]
         metas = [(run, _load_json(run / "run.json") or {}) for run in runs]
@@ -521,7 +526,7 @@ def create_app(
             rows.append(
                 "<div class='card facets'>"
                 + _facet_chips(
-                    "experiment",
+                    "run type",
                     sorted(label_counts.items(), key=lambda kv: -kv[1]),
                     "label",
                     {"label": selected_label},
@@ -534,19 +539,9 @@ def create_app(
             summary = meta.get("summary", {})
             metadata = meta.get("metadata") or {}
             badge = _run_row_status(run, meta)
-            experiment_parts = [
-                part
-                for part, key in (("E1", "e1_ran"), ("E2", "e2_ran"))
-                if summary.get(key)
-            ]
             context_chips = "".join(
                 f"<span class=chip>{html.escape(str(value))}</span>"
                 for value in (
-                    (
-                        "experiment " + "+".join(experiment_parts)
-                        if experiment_parts
-                        else None
-                    ),
                     metadata.get("demo") or meta.get("label"),
                     meta.get("scene") or metadata.get("scene"),
                     summary.get("backend") or metadata.get("backend"),
@@ -572,11 +567,7 @@ def create_app(
         stages = [s for s in subdirectories if s not in WORKING_DIR_NAMES]
         skipped = [s for s in subdirectories if s in WORKING_DIR_NAMES]
         result_files = sorted(
-            (
-                p
-                for p in run_dir.iterdir()
-                if p.is_file() and p.name not in {"run.json", "gate_p2.txt"}
-            ),
+            (p for p in run_dir.iterdir() if p.is_file() and p.name != "run.json"),
             key=lambda p: (
                 _RESULT_FILE_ORDER.get(p.name, len(_RESULT_FILE_ORDER)),
                 p.name,
@@ -599,41 +590,8 @@ def create_app(
         if _latest_trace(run_dir) is not None:
             nav = f"<a href='{url_for('live_run', name=name)}'>live execution</a>" + nav
         parts = [_render_run_meta(run_dir), _render_pipeline_map(stages)]
-        result_names = {p.name for p in result_files}
         meta = _load_json(run_dir / "run.json") or {}
-        if (
-            result_names
-            & {
-                "e1_summary.json",
-                "e1_report.txt",
-                "e2_decisions.jsonl",
-                "e2_report.txt",
-            }
-            or (run_dir / "D_experiment").is_dir()
-        ):
-            summary = meta.get("summary") or {}
-            ran = [
-                part
-                for part, key in (("E1", "e1_ran"), ("E2", "e2_ran"))
-                if summary.get(key) is not False
-            ]
-            parts.append(
-                "<div class=card><b>This is an experiment run"
-                + (f" ({' + '.join(ran)})" if ran else "")
-                + "</b><p class=explain style='margin-top:4px'>"
-                "E1 breaks the symbol library in known ways and asks: how "
-                "often does each repair method produce a correct fix that "
-                "passes review? E2 keeps the fixes themselves fixed (one "
-                "right, the others wrong on purpose) and asks: how "
-                "reliably does each review plan accept the right fix and "
-                "reject the wrong ones? The reports and the raw decision "
-                "records are below.</p></div>"
-            )
-        else:
-            parts.append(_task_verdict_card(run_dir, meta))
-        gate_path = run_dir / "gate_p2.txt"
-        if gate_path.is_file():
-            parts.append(_file_block(gate_path, _render_gate(gate_path)))
+        parts.append(_task_verdict_card(run_dir, meta))
         if result_files:
             parts.append(
                 _section(
@@ -819,10 +777,89 @@ def create_app(
         return _page(
             "capability catalog",
             _render_capability_catalog(
-                coraplex_capability_catalog(),
+                coraplex_capability_catalog(
+                    initialize_coraplex_capabilities(
+                        _reviewed_contracts(), realization_workspace
+                    )
+                ),
                 _operator_usage_by_capability(library_dir),
+                realization_candidates=(
+                    ()
+                    if realization_workspace is None
+                    else realization_workspace.candidates()
+                ),
+                contract_candidates=(
+                    ()
+                    if contract_workspace is None
+                    else contract_workspace.candidates()
+                ),
             ),
         )
+
+    def _reviewed_contracts() -> tuple[CapabilityContract, ...]:
+        """
+        Contracts the shipped libraries carry plus those the workspace admitted.
+        """
+        contracts = {
+            contract.uid: contract for contract in _contracts_in_libraries(library_dir)
+        }
+        if contract_workspace is not None:
+            for contract in contract_workspace.approved_contracts():
+                contracts.setdefault(contract.uid, contract)
+        return tuple(contracts[uid] for uid in sorted(contracts))
+
+    @app.post("/capabilities/contracts/<candidate_id>/approve")
+    def approve_contract(candidate_id: str):
+        if contract_workspace is None:
+            abort(404)
+        reviewer = str(request.form.get("reviewer") or "").strip()
+        if not reviewer:
+            abort(400)
+        contract_workspace.approve(
+            candidate_id,
+            reviewer,
+            discover_coraplex_capability_contract_drafts(),
+            review_note=str(request.form.get("review_note") or "").strip() or None,
+        )
+        return redirect(url_for("capability_catalog"))
+
+    @app.post("/capabilities/contracts/<candidate_id>/reject")
+    def reject_contract(candidate_id: str):
+        if contract_workspace is None:
+            abort(404)
+        reviewer = str(request.form.get("reviewer") or "").strip()
+        review_note = str(request.form.get("review_note") or "").strip()
+        if not reviewer or not review_note:
+            abort(400)
+        contract_workspace.reject(candidate_id, reviewer, review_note)
+        return redirect(url_for("capability_catalog"))
+
+    @app.post("/capabilities/realizations/<candidate_id>/approve")
+    def approve_realization(candidate_id: str):
+        if realization_workspace is None:
+            abort(404)
+        reviewer = str(request.form.get("reviewer") or "").strip()
+        if not reviewer:
+            abort(400)
+        approve_realization_candidate(
+            realization_workspace,
+            candidate_id,
+            reviewer,
+            _reviewed_contracts(),
+            review_note=str(request.form.get("review_note") or "").strip() or None,
+        )
+        return redirect(url_for("capability_catalog"))
+
+    @app.post("/capabilities/realizations/<candidate_id>/reject")
+    def reject_realization(candidate_id: str):
+        if realization_workspace is None:
+            abort(404)
+        reviewer = str(request.form.get("reviewer") or "").strip()
+        review_note = str(request.form.get("review_note") or "").strip()
+        if not reviewer or not review_note:
+            abort(400)
+        realization_workspace.reject(candidate_id, reviewer, review_note)
+        return redirect(url_for("capability_catalog"))
 
     @app.route("/grounding-factories")
     def grounding_factories() -> str:
@@ -924,8 +961,12 @@ def create_app(
 
 
 def _render_pipeline_map(present_stages: list[str]) -> str:
-    """The run's place in the pipeline: which stages ran, what each does,
-    and what an absent stage means. Present stages link to their section."""
+    """
+    The run's place in the pipeline: which stages ran, what each does, and what an
+    absent stage means.
+
+    Present stages link to their section.
+    """
     steps = []
     for stage, label, does, absent_meaning in PIPELINE_STEPS:
         if stage in present_stages:
@@ -952,7 +993,9 @@ def _render_pipeline_map(present_stages: list[str]) -> str:
 
 
 def _file_block(path: Path, rendered: str, display_name: str | None = None) -> str:
-    """A file heading with its one-line identity, above its rendering."""
+    """
+    A file heading with its one-line identity, above its rendering.
+    """
     name = display_name if display_name is not None else path.name
     whatis = FILE_EXPLAINERS.get(path.name)
     whatis_html = f" <span class=whatis>{html.escape(whatis)}</span>" if whatis else ""
@@ -963,7 +1006,9 @@ def _file_block(path: Path, rendered: str, display_name: str | None = None) -> s
 
 
 def _section(title: str, explainer: str = "", anchor: str = "") -> str:
-    """A stage heading with an optional one-line plain-language explainer."""
+    """
+    A stage heading with an optional one-line plain-language explainer.
+    """
     anchor_attr = f" id='{html.escape(anchor)}'" if anchor else ""
     heading = f"<h2 class=stage{anchor_attr}>{html.escape(title)}</h2>"
     if explainer:
@@ -975,11 +1020,12 @@ def _section(title: str, explainer: str = "", anchor: str = "") -> str:
 
 
 def _live_container(body: str, fragment_url: str) -> str:
-    """Wrap a live view and refresh only its contents, without page flicker.
+    """
+    Wrap a live view and refresh only its contents, without page flicker.
 
-    The fragment is only swapped in when it actually changed, and folded
-    sections the reader opened (all ``details`` carry stable ids) plus the
-    scroll position survive the swap.
+    The fragment is only swapped in when it actually changed, and folded sections the
+    reader opened (all ``details`` carry stable ids) plus the scroll position survive
+    the swap.
     """
     escaped_url = json.dumps(fragment_url)
     return (
@@ -1182,8 +1228,10 @@ def _render_live_execution(
 
 
 def _step_details(index: int, detail: dict) -> str:
-    """A folded per-step record: the full operator→platform chain and every
-    check this plan step went through, available once the step has run."""
+    """
+    A folded per-step record: the full operator→platform chain and every check this plan
+    step went through, available once the step has run.
+    """
     request = detail.get("request") or {}
     platform = detail.get(PipelineEvent.PLATFORM_RESULT) or {}
     checks = detail.get("checks") or []
@@ -1238,12 +1286,16 @@ def _step_details(index: int, detail: dict) -> str:
 
 
 STALE_TRACE_SECONDS = 30
-"""A non-terminal trace with no event for this long is flagged as stalled."""
+"""
+A non-terminal trace with no event for this long is flagged as stalled.
+"""
 
 
 def _liveness_banner(state: dict, records: list[dict]) -> str:
-    """Say plainly whether this view is live, finished, or stalled — the
-    page follows the newest trace file and cannot see processes."""
+    """
+    Say plainly whether this view is live, finished, or stalled — the page follows the
+    newest trace file and cannot see processes.
+    """
     if not records:
         return ""
     last_at = str(records[-1].get("at", ""))
@@ -1480,8 +1532,10 @@ def _format_seconds(seconds: float) -> str:
 
 
 def _stage_timeline(run_dir: Path, meta: dict) -> str:
-    """Where the run's wall-clock went: one proportional segment per stage,
-    from the run start to each stage's last logged event."""
+    """
+    Where the run's wall-clock went: one proportional segment per stage, from the run
+    start to each stage's last logged event.
+    """
     try:
         started = datetime.fromisoformat(str(meta["started_at"]))
     except (KeyError, TypeError, ValueError):
@@ -1530,8 +1584,10 @@ def _stage_timeline(run_dir: Path, meta: dict) -> str:
 
 
 def _task_verdict_card(run_dir: Path, meta: dict) -> str:
-    """The headline card of a task run: did the task succeed, with the plan
-    it ran — the answer first, before any artifact listing."""
+    """
+    The headline card of a task run: did the task succeed, with the plan it ran — the
+    answer first, before any artifact listing.
+    """
     summary = meta.get("summary") or {}
     succeeded = summary.get("succeeded")
     if succeeded is None:
@@ -1632,17 +1688,14 @@ _TASK_FILE_ORDER = {
     "result.json": 3,
     "trace.jsonl": 4,
 }
-"""Task artifacts in pipeline order (goal → PDDL → outcome → trace),
-not alphabetically."""
+"""
+Task artifacts in pipeline order (goal → PDDL → outcome → trace), not alphabetically.
+"""
 
-
-_RESULT_FILE_ORDER = {
-    "e1_summary.json": 0,
-    "e1_report.txt": 1,
-    "e2_decisions.jsonl": 2,
-    "e2_report.txt": 3,
-}
-"""Run-level results with the headline tables before their raw reports."""
+_RESULT_FILE_ORDER: dict[str, int] = {}
+"""
+Optional ordering of recognized run-level artifacts.
+"""
 
 
 def _render_stage(stage_dir: Path, media_url=None, detail_url_for=None) -> str:
@@ -1676,8 +1729,10 @@ def _render_stage(stage_dir: Path, media_url=None, detail_url_for=None) -> str:
 
 
 _INLINE_BYTE_LIMIT = 200 * 1024
-"""Raw content larger than this is summarized on the run overview and
-rendered in full only on its own artifact page."""
+"""
+Raw content larger than this is summarized on the run overview and rendered in full only
+on its own artifact page.
+"""
 
 
 def _too_big_stub(path: Path, detail_url: str, what: str) -> str:
@@ -1693,8 +1748,6 @@ def _too_big_stub(path: Path, detail_url: str, what: str) -> str:
 
 def _render_file(path: Path, media_url=None, detail_url=None, query=None) -> str:
     name, suffix = path.name, path.suffix.lower()
-    if name == "gate_p2.txt":
-        return _render_gate(path)
     if name == "universe.json":
         return _render_universe(_load_json(path))
     if name == "result.json":
@@ -1703,8 +1756,6 @@ def _render_file(path: Path, media_url=None, detail_url=None, query=None) -> str
         return _render_goal(_load_json(path))
     if name.startswith("library_") and suffix == ".json":
         return _render_symbol_library(_load_json(path))
-    if name == "e1_summary.json":
-        return _render_e1_summary(_load_json(path))
     if name == "provenance.json":
         return _render_provenance(_load_json(path))
     if suffix == ".jsonl":
@@ -1715,10 +1766,6 @@ def _render_file(path: Path, media_url=None, detail_url=None, query=None) -> str
             return _render_live_execution(records, path.parent.name, compact=True)
         if name == "llm_transcript.jsonl":
             return _render_transcript(path, detail_url=detail_url, query=query)
-        if name == "e2_decisions.jsonl":
-            return _render_admission_matrix(path)
-        if name == "episodes.jsonl":
-            return _render_episodes(path, detail_url=detail_url, query=query)
         if detail_url and path.stat().st_size > _INLINE_BYTE_LIMIT:
             return _too_big_stub(path, detail_url, "event log")
         return _render_events(path)
@@ -1748,10 +1795,8 @@ def _render_file(path: Path, media_url=None, detail_url=None, query=None) -> str
         return "<p class=muted>(empty file)</p>"
     if name.endswith("_report.txt"):
         return (
-            "<div class=card><p class=explain>The pre-registered plain-text "
-            "record — this exact text is what the paper cites. The tables "
-            "above show the same numbers with context, so you rarely need "
-            "to read it raw.</p>"
+            "<div class=card><p class=explain>Plain-text report generated by "
+            "the run.</p>"
             "<details><summary>show the text report</summary>"
             f"<pre class=wrap>{html.escape(text)}</pre></details></div>"
         )
@@ -1762,7 +1807,9 @@ def _render_file(path: Path, media_url=None, detail_url=None, query=None) -> str
 
 
 def _parse_sexp(text: str):
-    """One tolerant s-expression read (PDDL files are s-expressions)."""
+    """
+    One tolerant s-expression read (PDDL files are s-expressions).
+    """
     stripped = "\n".join(line.split(";", 1)[0] for line in text.splitlines())
     tokens = stripped.replace("(", " ( ").replace(")", " ) ").split()
 
@@ -1787,7 +1834,9 @@ def _sexp_text(node) -> str:
 
 
 def _pddl_literal_chips(expression) -> str:
-    """A precondition/effect expression flattened to literal chips."""
+    """
+    A precondition/effect expression flattened to literal chips.
+    """
     if not isinstance(expression, list):
         return f"<span class=chip>{html.escape(str(expression))}</span>"
     literals = expression[1:] if expression and expression[0] == "and" else [expression]
@@ -1801,8 +1850,9 @@ def _pddl_literal_chips(expression) -> str:
 
 
 def _render_pddl(path: Path) -> str:
-    """Domain and problem files summarized structurally; the raw text
-    stays one fold away."""
+    """
+    Domain and problem files summarized structurally; the raw text stays one fold away.
+    """
     text = path.read_text(encoding="utf-8", errors="replace")
     raw = (
         f"<details><summary>show raw PDDL</summary>"
@@ -1997,7 +2047,9 @@ def _render_goal(data) -> str:
 
 
 _LIBRARY_RENDER_IDS = itertools.count()
-"""Distinct prefix per rendered library so node ids stay unique per page."""
+"""
+Distinct prefix per rendered library so node ids stay unique per page.
+"""
 
 _GRAPH_NODE_WIDTH = 200
 _GRAPH_NODE_HEIGHT = 30
@@ -2057,7 +2109,9 @@ _GRAPH_SCRIPT = """
 
 
 _ROLE_COLOR_COUNT = 5
-"""Distinct role-chip colors; roles beyond that cycle."""
+"""
+Distinct role-chip colors; roles beyond that cycle.
+"""
 
 _ROLE_LINK_SCRIPT = (
     "<script>(function(){if(window._roleLinkWired)return;window._roleLinkWired=1;"
@@ -2070,7 +2124,9 @@ _ROLE_LINK_SCRIPT = (
     "document.querySelectorAll('.role-hl').forEach(function(n){"
     "n.classList.remove('role-hl');});});})();</script>"
 )
-"""Hovering any role chip highlights the same role everywhere in its card."""
+"""
+Hovering any role chip highlights the same role everywhere in its card.
+"""
 
 
 def _contract_role_indexes(contract: dict) -> dict[str, int]:
@@ -2089,7 +2145,9 @@ def _role_chip(contract_uid: str, name: str, index: int) -> str:
 
 
 def _contract_signature(contract: dict) -> str:
-    """The contract as a call signature: its label's verb plus role chips."""
+    """
+    The contract as a call signature: its label's verb plus role chips.
+    """
     uid = str(contract.get("uid", ""))
     label = str(contract.get("label", ""))
     verb = label.rsplit(".", 1)[-1] or label
@@ -2101,7 +2159,9 @@ def _contract_signature(contract: dict) -> str:
 
 
 def _contract_signature_text(contract: dict) -> str:
-    """The signature as plain text, for one-line summaries."""
+    """
+    The signature as plain text, for one-line summaries.
+    """
     label = str(contract.get("label", ""))
     verb = label.rsplit(".", 1)[-1] or label
     names = ", ".join(_contract_role_indexes(contract))
@@ -2109,7 +2169,9 @@ def _contract_signature_text(contract: dict) -> str:
 
 
 def _highlight_roles(text: str, contract_uid: str, indexes: dict[str, int]) -> str:
-    """Escape ``text`` and replace role-name words with matching chips."""
+    """
+    Escape ``text`` and replace role-name words with matching chips.
+    """
     escaped = html.escape(str(text))
     if not indexes:
         return escaped
@@ -2123,10 +2185,11 @@ def _highlight_roles(text: str, contract_uid: str, indexes: dict[str, int]) -> s
 
 
 def _render_chain_anatomy(open_by_default: bool = True) -> str:
-    """One worked example tracing every concept from predicate to robot.
+    """
+    Trace the generic data flow from predicate to robot.
 
-    The design-time lane holds what a symbol library stores; the run-time
-    lane holds what dispatching a single plan step creates.
+    The design-time lane holds what a symbol library stores; the run-time lane holds
+    what dispatching a single plan step creates.
     """
 
     def box(kind: str, code: str, what: str, junction: bool = False) -> str:
@@ -2139,16 +2202,15 @@ def _render_chain_anatomy(open_by_default: bool = True) -> str:
 
     return (
         f"<details class=libsec{' open' if open_by_default else ''}>"
-        "<summary><b>How the pieces connect</b> "
-        "<span class=muted>— one worked example, opening a drawer</span></summary>"
+        "<summary><b>How the pieces connect</b></summary>"
         "<div class=anatomy-lane>design time — stored in the symbol library</div>"
         "<div class='anatomy-grid design'>"
-        + box("predicate", "opened(?d)", "a named yes/no question")
-        + box("operator", "open-drawer ?d ?h", "planned action: preconditions, effects")
-        + box("binding", "?d→patient, ?h→handle", "maps parameters to roles")
+        + box("predicate", "relation(?object)", "a named yes/no question")
+        + box("operator", "task-action ?actor ?object", "preconditions and effects")
+        + box("binding", "?actor→actor, ?object→patient", "maps parameters to roles")
         + box(
             "CapabilityContract",
-            "ArticulationStateChange",
+            "CapabilityInterface",
             "reviewed platform interface",
             junction=True,
         )
@@ -2159,13 +2221,13 @@ def _render_chain_anatomy(open_by_default: bool = True) -> str:
         "<div class='anatomy-grid runtime'>"
         + box(
             "ExecutionRequest",
-            "patient=drawer_top, target_state=OPEN",
+            "actor=robot, patient=object",
             "one message to the platform",
         )
-        + box("adapter", "→ OpenAction(…)", "translates to a native Coraplex action")
+        + box("adapter", "→ CoraplexAction(…)", "translates to a native action")
         + box(
             "verification",
-            "opened(?d) re-checked",
+            "relation(?object) re-checked",
             "by the predicate's truth procedure",
         )
         + "</div></details>"
@@ -2173,11 +2235,32 @@ def _render_chain_anatomy(open_by_default: bool = True) -> str:
 
 
 _OPERATOR_USAGE_CACHE: dict[tuple, dict[str, list[str]]] = {}
-"""Single-entry memo keyed by every library file's (path, mtime)."""
+"""
+Single-entry memo keyed by every library file's (path, mtime).
+"""
+
+
+def _contracts_in_libraries(library_dir: Path | None) -> tuple[CapabilityContract, ...]:
+    """
+    Every capability contract the shipped symbol libraries carry, once per uid.
+    """
+    contracts: dict[str, CapabilityContract] = {}
+    if library_dir is None or not library_dir.is_dir():
+        return ()
+    for path in sorted(library_dir.glob("*.json")):
+        data = _load_json(path)
+        if not isinstance(data, dict):
+            continue
+        for entry in data.get("capability_contracts", ()):
+            contract = from_json(entry)
+            contracts.setdefault(contract.uid, contract)
+    return tuple(contracts[uid] for uid in sorted(contracts))
 
 
 def _operator_usage_by_capability(library_dir: Path | None) -> dict[str, list[str]]:
-    """Which shipped operators bind each capability, as ``uid -> labels``."""
+    """
+    Which shipped operators bind each capability, as ``uid -> labels``.
+    """
     usage: dict[str, list[str]] = {}
     if library_dir is None or not library_dir.is_dir():
         return usage
@@ -2221,14 +2304,18 @@ _CAPABILITY_CATEGORIES: tuple[tuple[str, str, str], ...] = (
     ("robot", "Body posture", "gripper, arm, torso and carry postures"),
     ("material", "Working with material", "mixing, pouring, cutting"),
 )
-"""Display groups for the catalog, keyed by the label prefix before the dot."""
+"""
+Display groups for the catalog, keyed by the label prefix before the dot.
+"""
 
 
 def _render_grounding_factories(
     workspace: GroundingFactoryWorkspace,
     vocabulary: GroundingVocabulary,
 ) -> str:
-    """Render local candidates and current locally approved implementations."""
+    """
+    Render local candidates and current locally approved implementations.
+    """
     candidates = workspace.candidates()
     catalog = GroundingFactoryCatalog.load(workspace=workspace)
     specifications = tuple(catalog)
@@ -2300,7 +2387,9 @@ def _render_grounding_factories(
 def _render_grounding_vocabulary_candidate(
     candidate: GroundingVocabularyCandidate,
 ) -> str:
-    """Render one source-discovered EQL symbol and its review controls."""
+    """
+    Render one source-discovered EQL symbol and its review controls.
+    """
     entry = candidate.entry
     status = str(candidate.review_status)
     controls = ""
@@ -2340,7 +2429,9 @@ def _render_grounding_vocabulary_candidate(
 
 
 def _render_grounding_candidate(candidate: GroundingFactoryCandidate) -> str:
-    """Render one pending or reviewed EQL source proposal."""
+    """
+    Render one pending or reviewed EQL source proposal.
+    """
     status = str(candidate.review_status)
     roles = "".join(
         f"<span class=chip>{html.escape(role.name)}: "
@@ -2393,7 +2484,9 @@ def _render_grounding_candidate(candidate: GroundingFactoryCandidate) -> str:
 
 
 def _render_grounding_review_form(candidate: GroundingFactoryCandidate) -> str:
-    """Render explicit approve and reject operations for one pending candidate."""
+    """
+    Render explicit approve and reject operations for one pending candidate.
+    """
     approve_url = url_for(
         "approve_grounding_factory", candidate_id=candidate.candidate_id
     )
@@ -2416,7 +2509,9 @@ def _render_grounding_review_form(candidate: GroundingFactoryCandidate) -> str:
 def _render_approved_grounding_factory(
     specification: GroundingFactorySpec,
 ) -> str:
-    """Render one active source-backed grounding factory."""
+    """
+    Render one active source-backed grounding factory.
+    """
     origin_label = (
         "approved-local"
         if specification.origin.value == "local"
@@ -2449,15 +2544,18 @@ def _render_approved_grounding_factory(
 
 
 def _render_capability_catalog(
-    data: dict, operator_usage: dict[str, list[str]] | None = None
+    data: dict,
+    operator_usage: dict[str, list[str]] | None = None,
+    realization_candidates: tuple[RealizationCandidate, ...] = (),
+    contract_candidates: tuple[CapabilityContractCandidate, ...] = (),
 ) -> str:
-    """The reviewed contracts, grouped by what kind of activity they cover.
-
-    Each contract is one flat, fully labeled card; ``operator_usage`` maps
-    contract UIDs to the shipped operators bound to them, so every card
-    also shows its task-side neighbours.
     """
+    The reviewed contracts, grouped by what kind of activity they cover.
 
+    Each contract is one flat, fully labeled card; ``operator_usage`` maps contract UIDs
+    to the shipped operators bound to them, so every card also shows its task-side
+    neighbours.
+    """
     operator_usage = operator_usage or {}
     summary = data.get("summary") or {}
     entries = data.get("contracts") or []
@@ -2547,6 +2645,36 @@ def _render_capability_catalog(
             + "".join(render_entry(entry) for entry in members)
             + "</div>"
         )
+    contract_section = ""
+    if contract_candidates:
+        pending_contracts = sum(
+            candidate.review_status is CapabilityReviewStatus.PENDING
+            for candidate in contract_candidates
+        )
+        contract_section = (
+            "<details class=libsec open><summary><b>Contract candidates</b> "
+            f"<span class=muted>({pending_contracts} pending)</span></summary>"
+            + "".join(
+                _render_contract_candidate(candidate)
+                for candidate in contract_candidates
+            )
+            + "</details>"
+        )
+    candidate_section = ""
+    if realization_candidates:
+        pending_candidates = sum(
+            candidate.review_status is CapabilityReviewStatus.PENDING
+            for candidate in realization_candidates
+        )
+        candidate_section = (
+            "<details class=libsec open><summary><b>Realization candidates</b> "
+            f"<span class=muted>({pending_candidates} pending)</span></summary>"
+            + "".join(
+                _render_realization_candidate(candidate)
+                for candidate in realization_candidates
+            )
+            + "</details>"
+        )
     pending_section = ""
     if pending_actions:
         pending_rows = "".join(
@@ -2597,8 +2725,133 @@ def _render_capability_catalog(
         f"{summary.get('built_in_verification', 0)}</span>"
         f"<span class=metric><b>awaiting review</b>: "
         f"{summary.get('pending_review', 0)}</span></div>"
-        f"{pending_section}<div class=tabs>{filter_buttons}</div>{''.join(sections)}"
+        f"{contract_section}{candidate_section}{pending_section}"
+        f"<div class=tabs>{filter_buttons}</div>{''.join(sections)}"
         f"{script}{_ROLE_LINK_SCRIPT}"
+    )
+
+
+def _render_contract_candidate(candidate: CapabilityContractCandidate) -> str:
+    """
+    Render one proposed contract and, while pending, its review controls.
+    """
+    status = candidate.review_status
+    contract = candidate.contract
+    roles = "".join(
+        f"<li><code>{html.escape(role.name)}</code>: "
+        + html.escape(
+            ", ".join(item.short_name for item in role.accepted_symbol_types)
+            or " | ".join(role.allowed_values)
+        )
+        + ("" if role.required else " <span class=muted>(optional)</span>")
+        + "</li>"
+        for role in contract.roles
+    )
+    controls = ""
+    if status is CapabilityReviewStatus.PENDING:
+        approve_url = url_for("approve_contract", candidate_id=candidate.candidate_id)
+        reject_url = url_for("reject_contract", candidate_id=candidate.candidate_id)
+        controls = (
+            f"<form method=post action='{html.escape(approve_url)}'>"
+            "<input name=reviewer required placeholder='reviewer'> "
+            "<input name=review_note placeholder='review note'> "
+            "<button type=submit>Approve contract</button></form>"
+            f"<form method=post action='{html.escape(reject_url)}'>"
+            "<input name=reviewer required placeholder='reviewer'> "
+            "<input name=review_note required placeholder='rejection reason'> "
+            "<button type=submit>Reject</button></form>"
+        )
+    badge_class = "warn" if status is CapabilityReviewStatus.PENDING else ""
+    return (
+        f"<div class=card id='contract-{html.escape(candidate.candidate_id)}'>"
+        f"<b><code>{html.escape(candidate.candidate_id)}</code></b> "
+        f"<span class='badge {badge_class}'>{html.escape(status.value)}</span>"
+        f"<div><code>{html.escape(contract.uid)}</code> · {html.escape(contract.label)}"
+        f" · v{html.escape(contract.version)}</div>"
+        f"<ul>{roles}</ul>"
+        f"<div>effects: {html.escape(', '.join(contract.verifiable_effect_names))}"
+        f" · success when <code>{html.escape(contract.success_relation)}</code></div>"
+        f"<div class=muted>evidence: "
+        f"{html.escape(', '.join(candidate.action_source_ids) or 'none')}</div>"
+        f"<div class=muted>{html.escape(candidate.generated_by)}: "
+        f"{html.escape(candidate.rationale)}</div>"
+        + (
+            f"<div class=muted>{html.escape(status.value)} by "
+            f"{html.escape(candidate.reviewed_by or '')}"
+            + (
+                f" — {html.escape(candidate.review_note)}"
+                if candidate.review_note
+                else ""
+            )
+            + "</div>"
+            if candidate.reviewed_by
+            else ""
+        )
+        + f"{controls}</div>"
+    )
+
+
+def _render_realization_candidate(candidate: RealizationCandidate) -> str:
+    """
+    Render one proposed realization and, while pending, its review controls.
+    """
+    status = candidate.review_status
+    realization = candidate.realization
+    sources = "".join(
+        f"<li><code>{html.escape(source.parameter)}</code> ← "
+        f"{html.escape(source.kind.value)} <code>{html.escape(source.value)}</code></li>"
+        for source in realization.parameter_sources
+    )
+    condition = ""
+    if realization.applies_when is not None:
+        condition = (
+            f"<div class=muted>when <code>{html.escape(realization.applies_when.role)}</code>"
+            + (
+                f" = <code>{html.escape(realization.applies_when.value)}</code>"
+                if realization.applies_when.value is not None
+                else " is bound"
+            )
+            + "</div>"
+        )
+    controls = ""
+    if status is CapabilityReviewStatus.PENDING:
+        approve_url = url_for(
+            "approve_realization", candidate_id=candidate.candidate_id
+        )
+        reject_url = url_for("reject_realization", candidate_id=candidate.candidate_id)
+        controls = (
+            f"<form method=post action='{html.escape(approve_url)}'>"
+            "<input name=reviewer required placeholder='reviewer'> "
+            "<input name=review_note placeholder='review note'> "
+            "<button type=submit>Approve realization</button></form>"
+            f"<form method=post action='{html.escape(reject_url)}'>"
+            "<input name=reviewer required placeholder='reviewer'> "
+            "<input name=review_note required placeholder='rejection reason'> "
+            "<button type=submit>Reject</button></form>"
+        )
+    badge_class = "warn" if status is CapabilityReviewStatus.PENDING else ""
+    return (
+        f"<div class=card id='realization-{html.escape(candidate.candidate_id)}'>"
+        f"<b><code>{html.escape(candidate.candidate_id)}</code></b> "
+        f"<span class='badge {badge_class}'>{html.escape(status.value)}</span>"
+        f"<div><code>{html.escape(realization.capability_uid)}</code> ← "
+        f"<code>{html.escape(candidate.action_source_id)}</code></div>"
+        f"{condition}<ul>{sources}</ul>"
+        f"<div class=muted>{html.escape(candidate.generated_by)}: "
+        f"{html.escape(candidate.rationale)}</div>"
+        + (
+            f"<div class=muted>{html.escape(status.value)} by "
+            f"{html.escape(candidate.reviewed_by or '')}"
+            + (
+                f" — {html.escape(candidate.review_note)}"
+                if candidate.review_note
+                else ""
+            )
+            + "</div>"
+            if candidate.reviewed_by
+            else ""
+        )
+        + f"{controls}</div>"
     )
 
 
@@ -2608,11 +2861,13 @@ def _graph_label(text: str, limit: int = 27) -> str:
 
 
 def _render_library_graph(data: dict, prefix: str) -> str:
-    """The library as one interactive layered graph: predicates feed
-    operators (preconditions), operators write predicates (effects) and
-    connect through explicit bindings to capability contracts. Hover traces a
-    symbol; click pins the
-    trace and jumps to the definition below."""
+    """
+    The library as one interactive layered graph: predicates feed operators
+    (preconditions), operators write predicates (effects) and connect through explicit
+    bindings to capability contracts.
+
+    Hover traces a symbol; click pins the trace and jumps to the definition below.
+    """
     predicates = [str(p.get("name", "")) for p in data.get("predicates") or []]
     operators = data.get("operators") or []
     contracts = data.get("capability_contracts") or []
@@ -2742,7 +2997,9 @@ def _render_library_graph(data: dict, prefix: str) -> str:
 
 
 def _short_type(reference) -> str:
-    """``module:QualName`` shortened to the class name, full ref on hover."""
+    """
+    ``module:QualName`` shortened to the class name, full ref on hover.
+    """
     if isinstance(reference, dict):
         reference = reference.get("python_type_ref", "?")
     text = str(reference)
@@ -2751,14 +3008,18 @@ def _short_type(reference) -> str:
 
 
 def _binding_pairs(role_bindings):
-    """Role bindings as (role, binding) pairs, from a mapping or a pair list."""
+    """
+    Role bindings as (role, binding) pairs, from a mapping or a pair list.
+    """
     if isinstance(role_bindings, dict):
         return list(role_bindings.items())
     return [tuple(pair) for pair in role_bindings or []]
 
 
 def _binding_is_parameter(source) -> bool:
-    """The binding source, whether serialized as an enum object or a bare string."""
+    """
+    The binding source, whether serialized as an enum object or a bare string.
+    """
     if isinstance(source, dict):
         return source.get("name") == "PARAMETER"
     return str(source).lower() == "parameter"
@@ -2777,9 +3038,11 @@ def _literal_chips(literals) -> str:
 
 
 def _render_symbol_library(data) -> str:
-    """A symbol library rendered for reading: capability contracts with
-    their roles and ontology alignment, predicates with their truth
-    procedures, operators with preconditions/effects and their bindings."""
+    """
+    A symbol library rendered for reading: capability contracts with their roles and
+    ontology alignment, predicates with their truth procedures, operators with
+    preconditions/effects and their bindings.
+    """
     if not isinstance(data, dict) or "predicates" not in data:
         return _collapsible_json(data)
     prefix = f"lib{next(_LIBRARY_RENDER_IDS)}"
@@ -3007,7 +3270,8 @@ def _render_contract(
     card_class: str = "card",
     card_attributes: str = "",
 ) -> str:
-    """A capability contract as one flat, fully labeled card.
+    """
+    A capability contract as one flat, fully labeled card.
 
     Every field says what it is: the header carries "name" and "id" tags,
     and each body line is a labeled row. The label's verb and the roles form
@@ -3105,7 +3369,9 @@ _LIBRARY_SECTIONS = (
 
 
 def _render_library_diff(before, after) -> str:
-    """Added / removed / changed symbols between two library snapshots."""
+    """
+    Added / removed / changed symbols between two library snapshots.
+    """
     if not isinstance(before, dict) or not isinstance(after, dict):
         return "<p class=muted>(snapshots unreadable)</p>"
     parts = []
@@ -3169,18 +3435,16 @@ def _field_diff(old: dict, new: dict) -> str:
 
 
 VERSION_STORE_RENDER_LIMIT = 40
-"""Version stores rendered per run page; large experiment grids hold one
-store per episode, and the page names how many were left out."""
-
-_VERSION_ROLE_LABELS = {
-    "faulted-base": "the faulted library the repair started from",
-    "episode-admission": "the library after the curator admitted the patch",
-}
+"""
+Maximum version stores rendered on one run page.
+"""
 
 
 def _render_version_stores(run_dir: Path) -> str:
-    """Every versioned library store below a run, each with its commit
-    chain and the diff between consecutive versions."""
+    """
+    Every versioned library store below a run, each with its commit chain and the diff
+    between consecutive versions.
+    """
     stores: dict[Path, list[Path]] = {}
     for path in sorted(run_dir.glob("**/versions/v[0-9]*.json")):
         stores.setdefault(path.parent.parent, []).append(path)
@@ -3189,9 +3453,8 @@ def _render_version_stores(run_dir: Path) -> str:
     parts = [
         _section(
             "Library version stores",
-            "One store per repair episode: first the faulted starting "
-            "library, then the version the curator admitted. Open a diff to "
-            "see exactly which symbols the episode added, removed or changed.",
+            "Versioned symbol-library snapshots. Open a diff to see exactly "
+            "which symbols were added, removed, or changed.",
         )
     ]
     rendered = list(stores.items())[:VERSION_STORE_RENDER_LIMIT]
@@ -3205,7 +3468,7 @@ def _render_version_stores(run_dir: Path) -> str:
         for path in version_paths:
             record = _load_json(path) or {}
             meta = record.get("meta") or {}
-            role_label = _VERSION_ROLE_LABELS.get(str(meta.get("role", "")))
+            role_label = str(meta.get("role") or "")
             chips = "".join(
                 f"<span class=metric><b>{html.escape(str(k))}</b>: {html.escape(str(v))}</span>"
                 for k, v in meta.items()
@@ -3246,1405 +3509,38 @@ def _render_version_stores(run_dir: Path) -> str:
     return "".join(parts)
 
 
-_CONVERSATION_PAGE_SIZE = 10
-_CASE_PAGE_SIZE = 5
-_TRANSCRIPT_INLINE_MAX = 8
-
-_AGENT_HINTS = {
-    "planning-model-agent": (
-        "the step-by-step repair agent (used by the agentic-rag method): "
-        "each call is one turn of its loop — look at the failure, pick a "
-        "tool, refine the fix"
-    ),
-    "symbol-proposer": (
-        "the one-shot proposer (used by closed-book, rag-one-shot and "
-        "fixed-pipeline): one prompt in, one proposed fix out"
-    ),
-}
-"""What each LLM role in the transcript does, for hover tooltips."""
-
-_TRANSCRIPT_STAT_HINTS = {
-    "exchanges": (
-        "one exchange = one prompt sent to the model plus its reply; "
-        "the roles' calls sum to this total"
-    ),
-    "parse errors": (
-        "of that row's calls, how many replies were not in the required "
-        "machine-readable format — a subset of the calls, each retried, "
-        "not extra calls"
-    ),
-    "tokens": (
-        "total text sent to the model (in) and generated by it (out) — "
-        "the run's LLM cost"
-    ),
-}
-
-
-def _tip_chip(label: str, value: str, hint: str | None, extra_class: str = "") -> str:
-    tip = f' data-tip="{html.escape(hint, quote=True)}"' if hint else ""
-    return (
-        f"<span class='metric{extra_class}'{tip}>"
-        f"<b>{html.escape(label)}</b>: {value}</span>"
-    )
-
-
-_LOOPING_AGENTS = {"planning-model-agent"}
-"""Agents that work in multi-turn loops; their consecutive calls belong to
-one conversation.  Every other agent is one-shot: each attempt-1 call opens
-its own conversation and later attempts are format retries of it."""
-
-_TERMINAL_TOOLS = {"submit_for_admission", "declare_unsupported"}
-
-_TOOL_HINTS = {
-    "retrieve_domain_fragments": "search the knowledge corpus for relevant symbols",
-    "propose_patch": "put forward a candidate fix for the library",
-    "check_patch": "ask the reviewer's static check about the current candidate",
-    "compare_patch_versions": "compare the current candidate with the previous one",
-    "execute_diagnostic_probe": "try the current fix on one test scene",
-    "inspect_library": "look at the current predicates and operators",
-    "inspect_embodiment_profile": "look at what the robot platform can do",
-    "inspect_source_provenance": "read the full record of one retrieved fragment",
-    "declare_unsupported": "give up: the platform lacks a needed capability",
-    "submit_for_admission": "finish and hand the candidate to the reviewer",
-    "proposal": "the one-shot fix proposal itself",
-}
-"""What each tool a model reply can call actually does, for hover tips."""
-
-
-def _response_tool(record) -> str | None:
-    """The tool a model reply called, if the reply parsed as one."""
-    response = record.get("response")
-    if not isinstance(response, str):
-        return None
-    try:
-        payload = json.loads(response)
-    except json.JSONDecodeError:
-        return None
-    if isinstance(payload, dict):
-        tool = payload.get("tool")
-        if isinstance(tool, str):
-            return tool
-        if "rationale" in payload or "proposal" in payload:
-            return "proposal"
-    return None
-
-
-def _transcript_conversations(records: list[dict]) -> list[dict]:
-    """Group the flat call log into conversations — the unit a reader
-    cares about.  A looping agent's consecutive calls are the turns of one
-    repair conversation, closed when it submits or declares unsupported; a
-    one-shot agent's conversation is a single call plus its format retries
-    (attempt 2, 3, …)."""
-    conversations: list[dict] = []
-    current: dict | None = None
-    for record in records:
-        agent = str(record.get("agent_name", "?"))
-        try:
-            attempt = int(record.get("attempt") or 1)
-        except (TypeError, ValueError):
-            attempt = 1
-        fresh_call = attempt <= 1
-        if (
-            current is None
-            or agent != current["agent"]
-            or current["closed"]
-            or (agent not in _LOOPING_AGENTS and fresh_call)
-        ):
-            tags = {
-                key: record[key]
-                for key in _TRANSCRIPT_TAG_KEYS
-                if record.get(key) is not None
-            }
-            current = {"agent": agent, "turns": [], "closed": False, "tags": tags}
-            conversations.append(current)
-        if fresh_call or not current["turns"]:
-            current["turns"].append([record])
-        else:
-            current["turns"][-1].append(record)
-        if _response_tool(record) in _TERMINAL_TOOLS:
-            current["closed"] = True
-    return conversations
-
-
-_AGENT_BACKEND_LABELS = {
-    "planning-model-agent": (
-        "agentic-rag",
-        "this conversation IS the agentic-rag method: the multi-step "
-        "tool-loop repair backend",
-    ),
-    "symbol-proposer": (
-        "closed-book / rag-one-shot / fixed-pipeline",
-        "one of the three one-shot methods made this proposal — the call "
-        "log does not record which one",
-    ),
-}
-"""Which repair backend a conversation belongs to.  The looping agent is
-exactly the agentic-rag backend; a one-shot proposal comes from one of the
-three one-shot backends, which the transcript does not identify."""
-
-
-_GROUP_HINTS = {
-    "D1": (
-        "difficulty group D1 — missing model elements: the library lacks "
-        "something it needs (an operator or a predicate was removed)"
-    ),
-    "D2": (
-        "difficulty group D2 — wrong model content: something in the "
-        "library is incorrect (an inverted precondition, a wrong effect, "
-        "a wrong parameter type)"
-    ),
-    "D3": (
-        "difficulty group D3 — combined defects and platform mismatches: "
-        "several things broken at once, or the platform cannot support "
-        "the task at all"
-    ),
-}
-"""What each fault difficulty group means, for hover tips."""
-
-_TRANSCRIPT_TAG_KEYS = (
-    "backend",
-    "template_id",
-    "group",
-    "episode_index",
-    "proposal_context_id",
-)
-"""Episode-attribution fields the harness stamps onto transcript records
-(newer runs only; older transcripts lack them and fall back to structural
-heuristics)."""
-
-
-_EPISODE_INDEX_CACHE: dict = {}
-
-
-def _agentic_episode_index(path: Path) -> dict:
-    """Map each looping-agent episode's model-response sequence to what it
-    worked on: (template_id, proposal_seed, status).  Response sequences
-    are model-generated text, so they identify an episode where prompts
-    (which repeat across scene variations) cannot.  An ambiguous key maps
-    to None.  Cached on the file's identity — episodes.jsonl can be tens
-    of MB."""
-    try:
-        stat = path.stat()
-    except OSError:
-        return {}
-    cache_key = (str(path), stat.st_mtime_ns, stat.st_size)
-    if _EPISODE_INDEX_CACHE.get("key") == cache_key:
-        return _EPISODE_INDEX_CACHE["index"]
-    index: dict = {}
-    for record in _iter_jsonl(path):
-        if not isinstance(record, dict):
-            continue
-        responses = tuple(
-            event.get("response")
-            for event in record.get("events") or []
-            if isinstance(event, dict) and event.get("event") == "model_response"
-        )
-        if not responses:
-            continue
-        meta = {
-            "template": record.get("template_id"),
-            "seed": record.get("proposal_seed"),
-            "status": record.get("status"),
-            "group": record.get("group"),
-        }
-        if responses in index and index[responses] != meta:
-            index[responses] = None
-        else:
-            index[responses] = meta
-    _EPISODE_INDEX_CACHE["key"] = cache_key
-    _EPISODE_INDEX_CACHE["index"] = index
-    return index
-
-
-def _conversation_responses(conversation: dict) -> tuple:
-    return tuple(
-        record.get("response") for turn in conversation["turns"] for record in turn
-    )
-
-
-def _transcript_cases(conversations: list[dict]) -> list[list[dict]]:
-    """Group conversations into repair cases.  The experiment loop attacks
-    one failure at a time.  Tagged transcripts (newer runs) carry the case
-    identity on every record, so a case is simply a run of conversations
-    with the same (template, episode, context).  Untagged transcripts fall
-    back to the structural rule: the looping agent's conversation opens
-    the case, the one-shot proposals that follow attack the very same
-    failure — each method alone, nothing shared between them."""
-    cases: list[list[dict]] = []
-    previous_key = object()
-    for conversation in conversations:
-        tags = conversation.get("tags") or {}
-        key = tuple(
-            tags.get(field)
-            for field in ("template_id", "episode_index", "proposal_context_id")
-        )
-        if any(value is not None for value in key):
-            if cases and key == previous_key:
-                cases[-1].append(conversation)
-            else:
-                cases.append([conversation])
-            previous_key = key
-            continue
-        previous_key = object()
-        if conversation["agent"] in _LOOPING_AGENTS or not cases:
-            cases.append([conversation])
-        else:
-            cases[-1].append(conversation)
-    return cases
-
-
-def _case_meta(case: list[dict]) -> dict:
-    """Goal and failure class of a case, read from the failure certificate
-    inside the opening conversation's own prompt — no cross-file joins."""
-    prompt = case[0]["turns"][0][0].get("prompt")
-    meta = {}
-    if isinstance(prompt, str):
-        goal = re.search(r"^goal: (.+)$", prompt, re.MULTILINE)
-        failure = re.search(r"^failure class: (.+)$", prompt, re.MULTILINE)
-        if goal:
-            meta["goal"] = goal.group(1).strip()
-        if failure:
-            meta["failure"] = failure.group(1).strip()
-    return meta
-
-
-def _self_url(params: dict) -> str:
-    """A same-page URL carrying only the non-empty query parameters."""
-    encoded = urlencode({k: v for k, v in params.items() if v not in ("", None)})
-    return f"?{encoded}" if encoded else "?"
-
-
-def _page_links(page: int, pages: int, params: dict) -> str:
-    """A numbered pager: prev/next plus page numbers, long ranges elided
-    around the current page."""
-    if pages <= 1:
-        return ""
-
-    def link(target: int, label: str, current: bool = False) -> str:
-        href = _self_url({**params, "page": target if target > 1 else ""})
-        return (
-            f"<a class='{'on' if current else ''}' "
-            f"href='{html.escape(href)}'>{label}</a>"
-        )
-
-    shown = sorted(
-        {
-            candidate
-            for candidate in (
-                1,
-                2,
-                page - 1,
-                page,
-                page + 1,
-                pages - 1,
-                pages,
-            )
-            if 1 <= candidate <= pages
-        }
-    )
-    parts = []
-    if page > 1:
-        parts.append(link(page - 1, "&lsaquo; prev"))
-    previous = 0
-    for number in shown:
-        if number > previous + 1:
-            parts.append("<span class=muted>…</span>")
-        parts.append(link(number, str(number), current=number == page))
-        previous = number
-    if page < pages:
-        parts.append(link(page + 1, "next &rsaquo;"))
-    return "".join(parts)
-
-
-def _facet_chips(
-    label: str, entries, param: str, params: dict, hints=None, total=None
-) -> str:
-    """One row of filter chips; every link keeps the other filters."""
-    selected = params.get(param, "")
-    links = []
-    if total is None:
-        total = sum(n for _, n in entries)
-    for value, count in [("", total)] + list(entries):
-        href = _self_url({**params, param: value, "page": ""})
-        tip = ""
-        hint = hints.get(value) if hints and value else None
-        if hint:
-            tip = f' data-tip="{html.escape(hint, quote=True)}"'
-        links.append(
-            f"<a class='{'on' if value == selected else ''}'{tip} "
-            f"href='{html.escape(href)}'>"
-            f"{html.escape(value or 'all')} ({count})</a>"
-        )
-    return (
-        f"<div class=facet><span class=lbl>{html.escape(label)}</span>"
-        + "".join(links)
-        + "</div>"
-    )
-
-
-def _facet_select(fault_counts: dict, params: dict, unit_word: str = "cases") -> str:
-    """The fault-template dropdown (too many values for chips)."""
-    options = [
-        "<option value='"
-        + html.escape(_self_url({**params, "fault": "", "page": ""}))
-        + f"'>all faults ({sum(fault_counts.values())} {unit_word})</option>"
-    ]
-    for value, count in sorted(fault_counts.items()):
-        href = _self_url({**params, "fault": value, "page": ""})
-        selected = " selected" if params.get("fault") == value else ""
-        options.append(
-            f"<option value='{html.escape(href)}'{selected}>"
-            f"{html.escape(value)} ({count})</option>"
-        )
-    return (
-        "<div class=facet><span class=lbl>fault</span>"
-        "<select onchange='location.href=this.value'>"
-        + "".join(options)
-        + "</select></div>"
-    )
-
-
-def _transcript_facets(
-    total_cases: int,
-    shown_cases: int,
-    group_counts: dict,
-    fault_counts: dict,
-    role_counts: dict,
-    params: dict,
-    unit_word: str = "cases",
-) -> str:
-    """The filter bar: difficulty chips, a fault dropdown, role chips —
-    all combinable, every link keeping the other filters."""
-    rows = []
-    if group_counts:
-        rows.append(
-            _facet_chips(
-                "difficulty",
-                sorted(group_counts.items()),
-                "group",
-                params,
-                _GROUP_HINTS,
-                total=total_cases,
-            )
-        )
-    if fault_counts:
-        rows.append(_facet_select(fault_counts, params))
-    if role_counts:
-        rows.append(
-            _facet_chips(
-                "role",
-                sorted(role_counts.items(), key=lambda kv: -kv[1]),
-                "agent",
-                params,
-                _AGENT_HINTS,
-            )
-        )
-    active = any(params.get(key) for key in ("group", "fault", "scene", "agent"))
-    status = ""
-    if active:
-        status = (
-            f"<div class=facet><span class=lbl></span><span class=muted>"
-            f"showing {shown_cases} of {total_cases} {html.escape(unit_word)}"
-            "</span><a href='?'>clear filters</a></div>"
-        )
-    return f"<div class='card facets'>{''.join(rows)}{status}</div>"
-
-
-def _annotate_case(unit: list[dict], episode_index: dict) -> dict:
-    """Everything the filter bar and the box header need to know about one
-    case: fault template, difficulty group, scene, goal — from harness
-    tags when the transcript carries them, else from the episode join."""
-    meta = _case_meta(unit)
-    tags = unit[0].get("tags") or {}
-    episode = (
-        episode_index.get(_conversation_responses(unit[0]))
-        if episode_index and not tags
-        else None
-    ) or {}
-    context_id = str(tags.get("proposal_context_id") or "")
-    scene = (
-        context_id.split("/scene-", 1)[1]
-        if "/scene-" in context_id
-        else (str(episode["seed"]) if episode.get("seed") is not None else "")
-    )
-    return {
-        "unit": unit,
-        "tagged": bool(tags),
-        "template": str(tags.get("template_id") or episode.get("template") or ""),
-        "group": str(tags.get("group") or episode.get("group") or ""),
-        "scene": scene,
-        "goal": meta.get("goal") or "",
-        "failure": meta.get("failure") or "",
-    }
-
-
-def _conversation_outcome(conversation: dict) -> tuple[str, str]:
-    """(label, badge class) for how a conversation ended."""
-    final_turn = conversation["turns"][-1]
-    if not any(_response_tool(record) for record in final_turn) and any(
-        record.get("parse_error") for record in final_turn
-    ):
-        return "ended on parse failures", "bad"
-    last_tool = None
-    for turn in reversed(conversation["turns"]):
-        for record in reversed(turn):
-            last_tool = _response_tool(record)
-            if last_tool:
-                break
-        if last_tool:
-            break
-    if last_tool == "submit_for_admission":
-        return "submitted a fix for review", "ok"
-    if last_tool == "declare_unsupported":
-        return "declared the gap unsupported", "warn"
-    if last_tool == "proposal":
-        return "proposed a fix", "ok"
-    if last_tool is None:
-        return "no usable reply", "bad"
-    return f"stopped after {last_tool}", "warn"
-
-
-def _clock(record: dict) -> str:
-    stamp = str(record.get("recorded_at") or "")
-    return stamp[11:19] if len(stamp) >= 19 else stamp
-
-
-_PROMPT_SECTION_RE = re.compile(r"^## +(.+?)\s*$", re.MULTILINE)
-
-
-def _split_prompt(text: str) -> list[tuple[str, str]]:
-    """Split a prompt at its ``## Section`` headers; the preamble before
-    the first header becomes 'role & instructions'."""
-    parts: list[tuple[str, str]] = []
-    title, start = "role & instructions", 0
-    for match in _PROMPT_SECTION_RE.finditer(text):
-        parts.append((title, text[start : match.start()]))
-        title, start = match.group(1), match.start()
-    parts.append((title, text[start:]))
-    return [(t, chunk) for t, chunk in parts if chunk.strip()]
-
-
-def _prompt_details(
-    text: str,
-    sections: list[tuple[str, str]],
-    previous: dict | None,
-    opened: bool,
-) -> str:
-    """A long prompt as per-section folds.  Sections that differ from the
-    previous turn's prompt open by default and carry a change badge, so
-    the reader sees what the model newly saw this turn instead of
-    re-reading 15k chars of repeated boilerplate."""
-    blocks = []
-    changed = 0
-    for title, chunk in sections:
-        status, is_open = "", False
-        if previous is not None:
-            if title not in previous:
-                status, is_open = "new this turn", True
-            elif previous[title] != chunk:
-                status, is_open = "changed since last turn", True
-            else:
-                status = "same as last turn"
-        changed += is_open
-        badge = ""
-        if status:
-            badge = (
-                f" <span class='{'chip' if is_open else 'muted'}'>" f"{status}</span>"
-            )
-        blocks.append(
-            f"<details class=psec{' open' if is_open else ''}>"
-            f"<summary>{html.escape(title)}{badge} "
-            f"<span class=muted>· {len(chunk)} chars</span></summary>"
-            f"<pre class='wrap psec-body'>{html.escape(chunk)}</pre></details>"
-        )
-    note = f" · {len(sections)} sections"
-    if previous is not None:
-        note += f", {changed} changed since the previous turn"
-    preview = text.strip().replace("\n", " ")[:70]
-    return (
-        f"<details{' open' if opened else ''}>"
-        f"<summary>prompt ({len(text)} chars) &mdash; "
-        f"{html.escape(preview)}…<span class=muted>{note}</span></summary>"
-        f"<div class=prompt-secs>{''.join(blocks)}"
-        f"<details><summary>full raw prompt</summary>"
-        f"<pre class='wrap psec-body'>{html.escape(text)}</pre></details>"
-        "</div></details>"
-    )
-
-
-def _conversation_card(number: int, conversation: dict, open_all: bool) -> str:
-    agent = conversation["agent"]
-    turns = conversation["turns"]
-    calls = sum(len(turn) for turn in turns)
-    agent_hint = _AGENT_HINTS.get(agent, "an LLM role in the repair pipeline")
-    outcome, badge = _conversation_outcome(conversation)
-    started, ended = _clock(turns[0][0]), _clock(turns[-1][-1])
-    span = f"{started} → {ended}" if started and ended != started else started
-    shape = (
-        f"{len(turns)} turns" + (f", {calls} calls" if calls > len(turns) else "")
-        if agent in _LOOPING_AGENTS
-        else ("1 call" if calls == 1 else f"1 call, {calls - 1} retries")
-    )
-    backend_chip = ""
-    recorded_backend = (conversation.get("tags") or {}).get("backend")
-    if recorded_backend:
-        backend_chip = (
-            ' <span class=chip data-tip="recorded by the experiment '
-            'harness at call time">backend: '
-            f"{html.escape(str(recorded_backend))}</span>"
-        )
-    elif agent in _AGENT_BACKEND_LABELS:
-        backend_name, backend_tip = _AGENT_BACKEND_LABELS[agent]
-        backend_chip = (
-            f' <span class=chip data-tip="{html.escape(backend_tip, quote=True)}">'
-            f"backend: {html.escape(backend_name)}</span>"
-        )
-    head = (
-        f"<b>#{number}</b> "
-        f'<b data-tip="{html.escape(agent_hint, quote=True)}">'
-        f"{html.escape(agent)}</b>{backend_chip} "
-        f"<span class=muted>· {shape} · {html.escape(span)}</span>"
-        f"<span class='badge {badge}'>{html.escape(outcome)}</span>"
-    )
-    turn_blocks = []
-    previous_sections: dict | None = None
-    for turn_number, turn in enumerate(turns, start=1):
-        tool = None
-        for record in reversed(turn):
-            tool = _response_tool(record)
-            if tool:
-                break
-        errors = sum(1 for record in turn if record.get("parse_error"))
-        tool_tip = _TOOL_HINTS.get(tool or "")
-        tool_html = (
-            f'<span data-tip="{html.escape(tool_tip, quote=True)}">'
-            f"<code>{html.escape(tool)}</code></span>"
-            if tool and tool_tip
-            else (f"<code>{html.escape(tool)}</code>" if tool else "unparsed reply")
-        )
-        retry_note = (
-            f" <span class=muted>· {len(turn)} attempts</span>" if len(turn) > 1 else ""
-        )
-        error_note = (
-            f" <span style='color:var(--bad-fg)'>· {errors} parse "
-            f"error{'s' if errors > 1 else ''}</span>"
-            if errors
-            else ""
-        )
-        label = f"turn {turn_number}" if agent in _LOOPING_AGENTS else "the call"
-        first_prompt = turn[0].get("prompt")
-        turn_sections: dict | None = None
-        attempt_blocks = []
-        for attempt_number, record in enumerate(turn, start=1):
-            block = ""
-            for key in ("prompt", "response"):
-                text = record.get(key)
-                if not isinstance(text, str):
-                    continue
-                if key == "prompt":
-                    if attempt_number > 1 and text == first_prompt:
-                        block += (
-                            "<div class=muted>prompt — identical to " "attempt 1</div>"
-                        )
-                        continue
-                    sections = _split_prompt(text)
-                    if len(sections) > 1:
-                        block += _prompt_details(
-                            text, sections, previous_sections, opened=False
-                        )
-                        if attempt_number == 1:
-                            turn_sections = dict(sections)
-                        continue
-                preview = text.strip().replace("\n", " ")[:70]
-                open_attr = " open" if open_all and key == "response" else ""
-                block += (
-                    f"<details{open_attr}><summary>{key} ({len(text)} chars) "
-                    f"&mdash; {html.escape(preview)}…</summary>"
-                    f"<pre class=wrap>{html.escape(text)}</pre></details>"
-                )
-            if record.get("parse_error"):
-                block += (
-                    f"<div class=badbox>{html.escape(str(record['parse_error']))}</div>"
-                )
-            attempt_blocks.append(block)
-        if turn_sections is not None:
-            previous_sections = turn_sections
-        if len(attempt_blocks) == 1:
-            body = attempt_blocks[0]
-        else:
-            # only the decisive last attempt shows; retries it replaced fold
-            earlier = "".join(
-                f"<div class=muted style='margin-top:6px'>attempt {i}</div>{block}"
-                for i, block in enumerate(attempt_blocks[:-1], start=1)
-            )
-            body = (
-                f"<details class=earlier><summary>earlier attempts "
-                f"({len(attempt_blocks) - 1}) — replies failed to parse and "
-                "were retried</summary>"
-                f"{earlier}</details>"
-                f"<div class=muted style='margin-top:6px'>final attempt "
-                f"({len(attempt_blocks)})</div>"
-                f"{attempt_blocks[-1]}"
-            )
-        turn_blocks.append(
-            f"<details{' open' if open_all else ''} class=turn>"
-            f"<summary>{label} · {tool_html}{retry_note}{error_note}</summary>"
-            f"{body}</details>"
-        )
-    return f"<div class=card>{head}{''.join(turn_blocks)}</div>"
-
-
 def _render_transcript(path: Path, detail_url=None, query=None) -> str:
-    """The LLM exchange log.  Small logs render inline; a long experiment
-    transcript shows a stats card on the run overview and gets its own
-    paginated, agent-filterable page (a 20 MB log must never be inlined)."""
-    records = [r for r in _iter_jsonl(path) if isinstance(r, dict)]
+    """
+    Render an append-only language-model exchange log without task assumptions.
+    """
+    records = [record for record in _iter_jsonl(path) if isinstance(record, dict)]
     if not records:
-        return "<p class=muted>(no exchanges)</p>"
-    _conversations_early = _transcript_conversations(records)
-    conversation_total = len(_conversations_early)
-    case_total = (
-        len(_transcript_cases(_conversations_early))
-        if any(c["agent"] in _LOOPING_AGENTS for c in _conversations_early)
-        else None
-    )
-    agents = Counter(str(r.get("agent_name", "?")) for r in records)
-    errors_by_agent = Counter(
-        str(r.get("agent_name", "?")) for r in records if r.get("parse_error")
-    )
-    parse_errors = sum(errors_by_agent.values())
-    tokens_in = sum(r.get("input_tokens") or 0 for r in records)
-    tokens_out = sum(r.get("output_tokens") or 0 for r in records)
-
-    def _error_cell(errors: int, calls: int) -> str:
-        if not errors:
-            return "<td class=cell-muted>0</td>"
-        share = errors / calls
-        percent = "&lt;1%" if share < 0.01 else f"{share:.0%}"
-        return (
-            f"<td><span style='color:var(--bad-fg)'>{errors}</span>"
-            f" <span class=muted>· {percent} of its calls</span></td>"
-        )
-
-    role_rows = "".join(
-        '<tr><td><span data-tip="'
-        + html.escape(
-            _AGENT_HINTS.get(agent, "an LLM role in the repair pipeline"),
-            quote=True,
-        )
-        + f'"><code>{html.escape(agent)}</code></span></td>'
-        f"<td>{n}</td>{_error_cell(errors_by_agent.get(agent, 0), n)}</tr>"
-        for agent, n in agents.most_common()
-    )
-    total_row = (
-        '<tr><td><b><span data-tip="'
-        + html.escape(_TRANSCRIPT_STAT_HINTS["exchanges"], quote=True)
-        + f'">all exchanges</span></b></td><td><b>{len(records)}</b></td>'
-        f"<td><b>{parse_errors}</b></td></tr>"
-        if len(agents) > 1
-        else ""
-    )
-    breakdown = (
-        "<div class=tablewrap><table>"
-        "<tr><th>LLM role</th><th>calls</th>"
-        '<th data-tip="'
-        + html.escape(_TRANSCRIPT_STAT_HINTS["parse errors"], quote=True)
-        + '">replies that failed to parse</th></tr>'
-        f"{role_rows}{total_row}</table></div>"
-        + (
-            _tip_chip(
-                "repair cases",
-                str(case_total),
-                "one case = one broken-library failure; inside it every "
-                "repair method under test attacks that same failure "
-                "independently",
-            )
-            if case_total
-            else ""
-        )
-        + _tip_chip(
-            "conversations",
-            str(conversation_total),
-            "one conversation = the calls one role made for one repair "
-            "case: the looping agent's turns until it submits or gives "
-            "up, or a one-shot call plus its format retries",
-        )
-        + (
-            _tip_chip(
-                "tokens",
-                f"{tokens_in:,} in / {tokens_out:,} out",
-                _TRANSCRIPT_STAT_HINTS["tokens"],
-            )
-            if tokens_in or tokens_out
-            else ""
-        )
-    )
-    heavy = (
-        len(records) > _TRANSCRIPT_INLINE_MAX
-        or path.stat().st_size > _INLINE_BYTE_LIMIT
-    )
-    if detail_url is not None and heavy:
-        return (
-            f"<div class=card>{breakdown}"
-            "<p class=explain>The call log of every LLM use in this run — "
-            "what was asked, what came back, what it cost — kept so every "
-            "repair can be audited later. Each row is one LLM role; their "
-            "calls sum to the total, and a failed parse is one of those "
-            "calls whose reply was unusable and got retried. Too long to "
-            "show here.</p>"
-            f"<a class=openlink href='{html.escape(detail_url)}'>"
-            + (
-                f"browse the {case_total} repair cases "
-                f"({conversation_total} conversations) &rarr;"
-                if case_total
-                else f"browse the {conversation_total} conversations &rarr;"
-            )
-            + "</a></div>"
-        )
-
-    conversations = _transcript_conversations(records)
-    for number, conversation in enumerate(conversations, start=1):
-        conversation["number"] = number
-    query = query or {}
-    selected_agent = str(query.get("agent") or "")
-    if selected_agent not in agents:
-        selected_agent = ""
-    open_all = len(records) <= _TRANSCRIPT_INLINE_MAX
-
-    # Case grouping needs a case signal: harness tags on the records, or a
-    # looping agent opening each case.  Facets narrow the case list; the
-    # role facet hides non-matching conversations inside each box.
-    grouped = any(c["agent"] in _LOOPING_AGENTS or c.get("tags") for c in conversations)
-    conversation_counts = Counter(c["agent"] for c in conversations)
-    selected_group = selected_fault = ""
-    facets = ""
-    if grouped:
-        episode_join = _agentic_episode_index(
-            path.parent.parent / "D_experiment" / "episodes.jsonl"
-        )
-        cases = [
-            _annotate_case(unit, episode_join)
-            for unit in _transcript_cases(conversations)
-        ]
-        for ordinal, case in enumerate(cases, start=1):
-            case["ordinal"] = ordinal
-        group_counts = Counter(c["group"] for c in cases if c["group"])
-        fault_counts = Counter(c["template"] for c in cases if c["template"])
-        selected_group = str(query.get("group") or "")
-        if selected_group not in group_counts:
-            selected_group = ""
-        selected_fault = str(query.get("fault") or "")
-        if selected_fault not in fault_counts:
-            selected_fault = ""
-        selected_scene = str(query.get("scene") or "")
-        if selected_scene not in {c["scene"] for c in cases}:
-            selected_scene = ""
-        params = {
-            "group": selected_group,
-            "fault": selected_fault,
-            "scene": selected_scene,
-            "agent": selected_agent,
-        }
-        units = [
-            case
-            for case in cases
-            if (not selected_group or case["group"] == selected_group)
-            and (not selected_fault or case["template"] == selected_fault)
-            and (not selected_scene or case["scene"] == selected_scene)
-        ]
-        for case in units:
-            case["visible"] = [
-                conv
-                for conv in case["unit"]
-                if not selected_agent or conv["agent"] == selected_agent
-            ]
-        units = [case for case in units if case["visible"]]
-        page_size = _CASE_PAGE_SIZE
-        if heavy:
-            facets = _transcript_facets(
-                total_cases=len(cases),
-                shown_cases=len(units),
-                group_counts=group_counts,
-                fault_counts=fault_counts,
-                role_counts=conversation_counts,
-                params=params,
-            )
-    else:
-        params = {"agent": selected_agent}
-        units = [
-            {"unit": [c], "visible": [c]}
-            for c in conversations
-            if not selected_agent or c["agent"] == selected_agent
-        ]
-        page_size = _CONVERSATION_PAGE_SIZE
-        if heavy:
-            facets = _transcript_facets(
-                total_cases=len(conversations),
-                shown_cases=len(units),
-                group_counts={},
-                fault_counts={},
-                role_counts=conversation_counts,
-                params=params,
-                unit_word="conversations",
-            )
-
-    pages = max(1, -(-len(units) // page_size))
-    try:
-        page = int(query.get("page") or 1)
-    except (TypeError, ValueError):
-        page = 1
-    page = min(max(1, page), pages)
-    start = (page - 1) * page_size
-    window = units[start : start + page_size]
-    pager = _page_links(page, pages, params)
-    controls = f"<div class=pager>{pager}</div>" if pager else ""
-
-    blocks = []
-    for case in window:
-        cards = "".join(
-            _conversation_card(c["number"], c, open_all) for c in case["visible"]
-        )
-        if not grouped:
-            blocks.append(cards)
-            continue
-        chips = ""
-        if case["template"]:
-            fault_hint = FAULT_TEMPLATE_HINTS.get(case["template"])
-            fault_tip = (
-                f' data-tip="{html.escape(fault_hint, quote=True)}"'
-                if fault_hint
-                else ""
-            )
-            chips += (
-                f"<span class=chip{fault_tip}>fault: "
-                f"{html.escape(case['template'])}</span>"
-            )
-        if case["group"]:
-            group_hint = _GROUP_HINTS.get(case["group"], "fault difficulty group")
-            chips += (
-                f'<span class=chip data-tip="'
-                f'{html.escape(group_hint, quote=True)}">group: '
-                f"{html.escape(case['group'])}</span>"
-            )
-        if case["scene"]:
-            chips += (
-                '<span class=chip data-tip="the randomized scene this '
-                "case ran in — the same fault is planted in several "
-                "different scenes, so one bad method can't get lucky "
-                'once and pass">scene-'
-                f"{html.escape(case['scene'])}</span>"
-            )
-        chips += "".join(
-            f"<span class=chip>{html.escape(f'{key}: {value}')}</span>"
-            for key, value in (
-                ("goal", case["goal"]),
-                (None if case["template"] else "failure", case["failure"]),
-            )
-            if key and value
-        )
-        unit = case["unit"]
-        followers = len(unit) - 1
-        if case["tagged"]:
-            order_note = " — each labelled with its backend"
-        else:
-            order_note = " — the agentic-rag loop first" + (
-                f", then {followers} one-shot proposal"
-                f"{'s' if followers != 1 else ''} (closed-book, "
-                "rag-one-shot, fixed-pipeline)"
-                if followers
-                else ""
-            )
-        filter_note = (
-            f" · showing {len(case['visible'])} of them "
-            f"(role filter: {html.escape(selected_agent)})"
-            if len(case["visible"]) < len(unit)
-            else ""
-        )
-        head = (
-            f"<div class=case-head><b>repair case {case['ordinal']}</b> "
-            f"{chips} "
-            f"<span class=muted>{len(unit)} independent attempts on this "
-            f"one failure{order_note}; none of them sees the others' "
-            f"work{filter_note}</span></div>"
-        )
-        verdict_link = ""
-        if (
-            detail_url is None
-            and case["template"]
-            and case["scene"]
-            and (path.parent.parent / "D_experiment" / "episodes.jsonl").is_file()
-        ):
-            href = "../D_experiment/episodes.jsonl?" + urlencode(
-                {"fault": case["template"], "scene": case["scene"]}
-            )
-            verdict_link = (
-                f"<a class=openlink href='{html.escape(href)}'>"
-                "how did every backend fare on this case? "
-                "see the settled verdicts &rarr;</a>"
-            )
-        blocks.append(f"<div class=case>{head}{cards}{verdict_link}</div>")
-
-    prefix = ""
-    if heavy:
-        prefix = (
-            f"<div class=card>{breakdown}"
-            f"<p class=explain>The {len(records)} calls group into "
-            f"{len(conversations)} conversations, and the conversations "
-            f"into {len(_transcript_cases(conversations))} repair cases — "
-            "the boxes below, one per planted failure, in the order they "
-            "ran. A case is one fault template (what was broken) tried in "
-            "one randomized scene (where) — the same fault recurs across "
-            "several scenes so a method's success rate means something. "
-            "Inside a box the LLM-using repair methods each attack that "
-            "same failure separately: they compete, they never "
-            "collaborate, and no state carries over between cases. The "
-            "backends that never call the LLM (typed-enumeration, "
-            "no-repair, oracle-reference) leave no conversations here. "
-            "Open a turn for the full prompt and reply.</p></div>"
-        )
-    if not blocks:
-        blocks = [
-            "<p class=muted>nothing matches the current filters — "
-            "<a href='?'>clear them</a></p>"
-        ]
-    return prefix + facets + controls + "".join(blocks) + controls
-
-
-def _rate_bar(rate, low=None, high=None, bad: bool = False, count: str = "") -> str:
-    """A horizontal rate bar with an optional confidence-interval overlay
-    (the dark ticks) and the raw count next to it."""
-
-    def _clamp(value) -> float:
-        return max(0.0, min(1.0, float(value)))
-
-    percent = _clamp(rate or 0.0) * 100
-    ci = ""
-    if low is not None and high is not None:
-        left = _clamp(low) * 100
-        width = max(0.0, _clamp(high) - _clamp(low)) * 100
-        ci = f"<span class=ci style='left:{left:.1f}%;width:{width:.1f}%'></span>"
-    label = f"{count} · " if count else ""
-    return (
-        "<span class=rate-cell><span class=rate-bar>"
-        f"<span class='fill{' bad' if bad else ''}' style='width:{percent:.1f}%'></span>{ci}</span>"
-        f"<span class=rate-num>{html.escape(label)}{percent:.1f}%</span></span>"
-    )
-
-
-def _render_gate(path: Path) -> str:
-    """gate_p2.txt as a headline verdict card: the pass/downgrade word as a
-    badge, the reason in plain sight, the paired-difference numbers in a
-    grid, the raw text folded below."""
-    text = path.read_text(encoding="utf-8", errors="replace")
-    lines = [line for line in text.splitlines() if line.strip()]
-    if not lines:
-        return "<p class=muted>(empty file)</p>"
-    head = lines[0].strip()
-    verdict, reason = head, ""
-    if ":" in head:
-        _, rest = head.split(":", 1)
-        words = rest.strip().split(None, 1)
-        verdict = words[0] if words else rest.strip()
-        reason = words[1] if len(words) > 1 else ""
-    passed = verdict.upper().startswith("PASS")
-    badge_class = "ok" if passed else "warn"
-    grid = "".join(
-        f"<div class=k>{html.escape(key.strip())}</div>"
-        f"<div><code>{html.escape(value.strip())}</code></div>"
-        for key, _, value in (line.strip().partition(":") for line in lines[1:])
-        if value.strip()
-    )
-    return (
-        "<div class='card verdict'>"
-        f"<span class='badge {badge_class}'>{html.escape(verdict)}</span>"
-        f"<b>the run's verdict on the pre-registered claim</b>"
-        + (
-            f"<p class=explain style='margin-top:6px'>{html.escape(reason)}</p>"
-            if reason
-            else ""
-        )
-        + (f"<div class=kv style='margin-top:8px'>{grid}</div>" if grid else "")
-        + "<details><summary>show the raw gate text</summary>"
-        f"<pre class=wrap>{html.escape(text)}</pre></details></div>"
-    )
-
-
-_E1_METRICS = (
-    ("correct_repair", "correct repair", False),
-    ("false_admission", "false admission", True),
-    ("unsupported_detection", "unsupported detection", False),
-)
-
-
-def _render_e1_summary(data) -> str:
-    """The pre-registered E1 outcome rates as a backend comparison table
-    with Wilson-interval bars."""
-    if not isinstance(data, dict) or not data:
-        return _collapsible_json(data)
-    header = (
-        "<tr><th>backend</th>"
-        + "".join(
-            f"<th>{html.escape(label)}{' (lower is better)' if bad else ''}</th>"
-            for _, label, bad in _E1_METRICS
-        )
-        + "</tr>"
-    )
+        return "<p class=muted>(no language-model exchanges)</p>"
     rows = []
-    for backend in sorted(data):
-        cells = [f"<td><code>{html.escape(backend)}</code></td>"]
-        for key, _, bad in _E1_METRICS:
-            rate = (data[backend] or {}).get(key)
-            if not isinstance(rate, dict):
-                cells.append("<td class=cell-muted>—</td>")
-                continue
-            cells.append(
-                "<td>"
-                + _rate_bar(
-                    rate.get("rate"),
-                    rate.get("wilson_low"),
-                    rate.get("wilson_high"),
-                    bad=bad,
-                    count=f"{rate.get('successes', '?')}/{rate.get('total', '?')}",
-                )
-                + "</td>"
-            )
-        rows.append("<tr>" + "".join(cells) + "</tr>")
-    return (
-        "<div class=card>"
-        "<p class=explain>Pre-registered E1 outcome rates per repair "
-        "backend. Bars show the rate; the dark ticks span the 95% Wilson "
-        "interval — overlapping intervals mean the difference is not "
-        "settled by this data.</p>"
-        f"<div class=tablewrap><table>{header}{''.join(rows)}</table></div>"
-        f"<details><summary>show raw JSON</summary>{_json_block(data)}</details>"
-        "</div>"
-    )
-
-
-def _episode_cases(records: list[dict]) -> list[dict]:
-    """Group episode records into repair cases — the same unit Stage B's
-    transcript browser uses.  One case = one fault template injected into
-    one scene; every backend's episode for that case lands in the box."""
-    cases: dict[tuple, dict] = {}
-    for record in records:
-        template = str(record.get("template_id") or "?")
-        context = str(
-            record.get("proposal_context_id")
-            or record.get("proposal_seed")
-            or record.get("episode_index")
-            or ""
-        )
-        case = cases.setdefault(
-            (template, context),
-            {"template": template, "scene": "", "group": "", "episodes": []},
-        )
-        case["episodes"].append(record)
-        if not case["group"] and record.get("group"):
-            case["group"] = str(record["group"])
-        if not case["scene"]:
-            seed = record.get("proposal_seed")
-            case["scene"] = f"scene-{seed}" if seed is not None else context
-    ordered = sorted(
-        cases.values(),
-        key=lambda c: (c["group"] or "~", c["template"], c["scene"]),
-    )
-    for ordinal, case in enumerate(ordered, start=1):
-        case["ordinal"] = ordinal
-    return ordered
-
-
-def _episode_verdict(record: dict) -> tuple[str, str]:
-    """(human verdict, badge class) for one episode record."""
-    status = str(record.get("status") or "?")
-    if status == "no-failure":
-        return "fault never tripped", ""
-    if record.get("false_admission"):
-        return "false admission", "bad"
-    if record.get("correct_repair"):
-        return "correct repair", "ok"
-    if status == "unsupported_declared":
-        if record.get("template_unsupported"):
-            return "rightly declared unsupported", "ok"
-        return "wrongly declared unsupported", "bad"
-    if status == "patch_proposed":
-        return "proposed, rejected at review", ""
-    if status == "no_candidate":
-        return "no fix found", ""
-    if status == "budget_exhausted":
-        return "budget exhausted", ""
-    return status, ""
-
-
-_EPISODE_PAGE_SIZE = 10
-
-
-def _render_episode_browser(records: list[dict], query, path: Path) -> str:
-    """The full episodes page: the same case boxes as the Stage B
-    transcript browser, but each box holds every backend's settled verdict
-    for that case instead of the conversations."""
-    cases = _episode_cases(records)
-    group_counts = Counter(c["group"] for c in cases if c["group"])
-    fault_counts = Counter(c["template"] for c in cases)
-    backend_counts = Counter(str(r.get("backend") or "?") for r in records)
-    verdict_counts = Counter(_episode_verdict(r)[0] for r in records)
-
-    params = {
-        "group": str(query.get("group") or ""),
-        "fault": str(query.get("fault") or ""),
-        "scene": str(query.get("scene") or ""),
-        "backend": str(query.get("backend") or ""),
-        "verdict": str(query.get("verdict") or ""),
-    }
-    if params["group"] not in group_counts:
-        params["group"] = ""
-    if params["fault"] not in fault_counts:
-        params["fault"] = ""
-    scene_forms = {params["scene"], f"scene-{params['scene']}"}
-    if not params["scene"] or not any(c["scene"] in scene_forms for c in cases):
-        params["scene"] = ""
-    if params["backend"] not in backend_counts:
-        params["backend"] = ""
-    if params["verdict"] not in verdict_counts:
-        params["verdict"] = ""
-
-    shown = [
-        case
-        for case in cases
-        if (not params["group"] or case["group"] == params["group"])
-        and (not params["fault"] or case["template"] == params["fault"])
-        and (not params["scene"] or case["scene"] in scene_forms)
-    ]
-    for case in shown:
-        case["visible"] = [
-            r
-            for r in case["episodes"]
-            if (not params["backend"] or str(r.get("backend")) == params["backend"])
-            and (not params["verdict"] or _episode_verdict(r)[0] == params["verdict"])
-        ]
-    shown = [case for case in shown if case["visible"]]
-
-    facet_rows = []
-    if group_counts:
-        facet_rows.append(
-            _facet_chips(
-                "difficulty",
-                sorted(group_counts.items()),
-                "group",
-                params,
-                _GROUP_HINTS,
-                total=len(cases),
-            )
-        )
-    if len(fault_counts) > 1:
-        facet_rows.append(_facet_select(fault_counts, params))
-    facet_rows.append(
-        _facet_chips(
-            "backend",
-            sorted(backend_counts.items()),
-            "backend",
-            params,
-        )
-    )
-    facet_rows.append(
-        _facet_chips(
-            "verdict",
-            sorted(verdict_counts.items(), key=lambda kv: -kv[1]),
-            "verdict",
-            params,
-        )
-    )
-    status_line = ""
-    if any(params.values()):
-        status_line = (
-            f"<div class=facet><span class=lbl></span><span class=muted>"
-            f"showing {len(shown)} of {len(cases)} cases"
-            "</span><a href='?'>clear filters</a></div>"
-        )
-    facets = f"<div class='card facets'>{''.join(facet_rows)}{status_line}</div>"
-
-    page = max(1, int(str(query.get("page") or 1) or 1))
-    pages = max(1, -(-len(shown) // _EPISODE_PAGE_SIZE))
-    page = min(page, pages)
-    window = shown[(page - 1) * _EPISODE_PAGE_SIZE : page * _EPISODE_PAGE_SIZE]
-
-    quiet = sum(
-        1
-        for case in cases
-        if all(r.get("status") == "no-failure" for r in case["episodes"])
-    )
-    intro = (
-        f"{len(records)} episodes = {len(cases)} cases &times; "
-        f"{len(backend_counts)} backends. "
-        "A case is one fault template injected into one scene; every "
-        "backend attacks the same case, so its rows compare like for like."
-    )
-    if quiet:
-        intro += (
-            f" In {quiet} cases the injected fault never made planning "
-            f"fail, so there was nothing to repair; the remaining "
-            f"{len(cases) - quiet} cases are exactly the ones whose LLM "
-            "conversations Stage B records."
-        )
-    boxes = []
-    for case in window:
-        chips = ""
-        fault_hint = FAULT_TEMPLATE_HINTS.get(case["template"])
-        fault_tip = (
-            f' data-tip="{html.escape(fault_hint, quote=True)}"' if fault_hint else ""
-        )
-        chips += (
-            f"<span class=chip{fault_tip}>fault: "
-            f"{html.escape(case['template'])}</span>"
-        )
-        if case["group"]:
-            group_hint = _GROUP_HINTS.get(case["group"], "fault difficulty group")
-            chips += (
-                f'<span class=chip data-tip="'
-                f'{html.escape(group_hint, quote=True)}">group: '
-                f"{html.escape(case['group'])}</span>"
-            )
-        if case["scene"]:
-            chips += (
-                '<span class=chip data-tip="the randomized scene this '
-                "case ran in — the same fault is planted in several "
-                "different scenes, so one bad method can't get lucky "
-                'once and pass">'
-                f"{html.escape(case['scene'])}</span>"
-            )
-        rows = []
-        for record in case["visible"]:
-            verdict, klass = _episode_verdict(record)
-            badge_html = (
-                f"<span class='badge {klass}'>{html.escape(verdict)}</span>"
-                if klass
-                else f"<span class=muted>{html.escape(verdict)}</span>"
-            )
-            status = str(record.get("status") or "?")
-            tokens = (record.get("budget") or {}).get("estimated_tokens_used")
-            cost = f"{tokens:,} tokens" if tokens else "<span class=muted>—</span>"
-            rows.append(
-                f"<tr><td><code>{html.escape(str(record.get('backend') or '?'))}"
-                f"</code></td><td>{badge_html} <span class=cell-muted>&middot; "
-                f"{html.escape(status)}</span></td><td>{cost}</td></tr>"
-            )
-        conversation_link = ""
-        attempted = any(
-            r.get("status") not in ("no-failure", None) for r in case["episodes"]
-        )
-        transcript_file = path.parent.parent / "B_repair" / "llm_transcript.jsonl"
-        if attempted and transcript_file.is_file():
-            href = "../B_repair/llm_transcript.jsonl?" + urlencode(
-                {
-                    "fault": case["template"],
-                    "scene": case["scene"].removeprefix("scene-"),
-                }
-            )
-            conversation_link = (
-                f"<a class=openlink href='{html.escape(href)}'>"
-                "read this case's LLM conversations &rarr;</a>"
-            )
-        boxes.append(
-            f"<div class=case><div class=case-head><b>case "
-            f"{case['ordinal']}</b> {chips}</div>"
-            "<div class=tablewrap><table>"
-            "<tr><th>backend</th><th>verdict</th><th>cost</th></tr>"
-            + "".join(rows)
-            + "</table></div>"
-            + conversation_link
-            + "</div>"
-        )
-    pager = _page_links(page, pages, params)
-    if pager:
-        pager = f"<div class=pager>{pager}</div>"
-    return (
-        f"<div class=card><p class=explain>{intro}</p></div>"
-        + facets
-        + "".join(boxes)
-        + pager
-    )
-
-
-def _render_episodes(path: Path, detail_url=None, query=None) -> str:
-    """episodes.jsonl aggregated: outcome counts per backend, with a
-    per-template breakdown folded below — raw records stay in the file.
-    On its own page (query given) the records regroup into the same
-    per-case boxes the Stage B transcript browser uses."""
-    records = [r for r in _iter_jsonl(path) if isinstance(r, dict)]
-    if not records:
-        return "<p class=muted>(no episodes)</p>"
-    if query is not None:
-        return _render_episode_browser(records, query, path)
-    statuses = sorted({str(r.get("status", "?")) for r in records})
-    by_backend: dict[str, list[dict]] = {}
-    for record in records:
-        by_backend.setdefault(str(record.get("backend", "?")), []).append(record)
-    header = (
-        "<tr><th>backend</th><th>episodes</th>"
-        + "".join(f"<th>{html.escape(s)}</th>" for s in statuses)
-        + "<th>admitted</th></tr>"
-    )
-    rows = []
-    details = []
-    for backend in sorted(by_backend):
-        episodes = by_backend[backend]
-        status_counts = Counter(str(r.get("status", "?")) for r in episodes)
-        admitted = sum(1 for r in episodes if r.get("admitted") is True)
+    for index, record in enumerate(records, start=1):
+        agent = html.escape(str(record.get("agent_name") or "model"))
+        attempt = html.escape(str(record.get("attempt") or 1))
+        prompt = html.escape(str(record.get("prompt") or ""))
+        response = html.escape(str(record.get("response") or ""))
+        error = record.get("parse_error")
+        error_html = f"<p class=bad>{html.escape(str(error))}</p>" if error else ""
         rows.append(
-            f"<tr><td><code>{html.escape(backend)}</code></td>"
-            f"<td>{len(episodes)}</td>"
-            + "".join(
-                f"<td>{status_counts.get(s) or '<span class=muted>·</span>'}</td>"
-                for s in statuses
-            )
-            + f"<td>{admitted}</td></tr>"
+            "<details class=turn>"
+            f"<summary>exchange {index} · {agent} · attempt {attempt}</summary>"
+            f"<h4>prompt</h4><pre class=wrap>{prompt}</pre>"
+            f"<h4>response</h4><pre class=wrap>{response}</pre>"
+            f"{error_html}</details>"
         )
-        template_counts: dict[str, Counter] = {}
-        for record in episodes:
-            template_counts.setdefault(str(record.get("template_id", "?")), Counter())[
-                str(record.get("status", "?"))
-            ] += 1
-        template_rows = "".join(
-            f"<tr><td><code>{html.escape(template)}</code></td>"
-            f"<td>{sum(counts.values())}</td>"
-            f"<td>{html.escape(', '.join(f'{n}× {s}' for s, n in counts.most_common()))}</td></tr>"
-            for template, counts in sorted(template_counts.items())
-        )
-        details.append(
-            f"<details><summary><code>{html.escape(backend)}</code> by fault template</summary>"
-            "<div class=tablewrap><table><tr><th>fault template</th><th>episodes</th>"
-            f"<th>outcomes</th></tr>{template_rows}</table></div></details>"
-        )
-    cases = _episode_cases(records)
-    chips = _tip_chip(
-        "episodes",
-        str(len(records)),
-        "one episode = one backend's full attempt at one case; "
-        "cases × backends = episodes",
-    ) + _tip_chip(
-        "cases",
-        str(len(cases)),
-        "one case = one fault template injected into one scene; "
-        "every backend attacks the same case",
-    )
-    browse = (
-        f"<a class=openlink href='{html.escape(detail_url)}'>"
-        f"browse the {len(cases)} cases ({len(records)} episodes) &rarr;</a>"
-        if detail_url
-        else ""
-    )
     return (
-        "<div class=card>"
-        f"{chips}"
-        "<p class=explain>Outcome counts per repair backend; open a backend "
-        "for its per-fault-template breakdown. Raw records stay in "
-        "episodes.jsonl.</p>"
-        f"<div class=tablewrap><table>{header}{''.join(rows)}</table></div>"
-        f"{''.join(details)}{browse}</div>"
+        f"<div class=card><span class=metric><b>exchanges</b>: {len(records)}</span>"
+        "</div>" + "".join(rows)
     )
 
 
 def _render_provenance(data) -> str:
-    """provenance.json as a readable reproducibility card."""
+    """
+    provenance.json as a readable reproducibility card.
+    """
     if not isinstance(data, dict):
         return _collapsible_json(data)
     repository = data.get("repository") or {}
@@ -4685,232 +3581,6 @@ def _render_provenance(data) -> str:
         f"<div class=kv>{grid}</div><div>{argument_chips}</div>"
         f"<details><summary>full provenance JSON</summary>{_json_block(data)}</details>"
         "</div>"
-    )
-
-
-def _render_admission_matrix(path: Path) -> str:
-    """E2 decisions as one admission matrix: (fault template, candidate) rows,
-    one column per curation policy, each cell colored by whether admitting or
-    rejecting was the correct call."""
-    decisions = [record for record in _iter_jsonl(path) if isinstance(record, dict)]
-    if not decisions:
-        return "<p class=muted>(no decisions)</p>"
-    policies = _policies_by_strictness(decisions)
-    cells: dict[tuple[str, str], dict[str, dict]] = {}
-    for decision in decisions:
-        key = (
-            str(decision.get("template_id", "?")),
-            str(decision.get("candidate", "?")),
-        )
-        cells.setdefault(key, {})[str(decision.get("policy", "?"))] = decision
-    header = (
-        "<tr><th>fault template</th><th>candidate patch</th>"
-        + "".join(_policy_th(policy) for policy in policies)
-        + "</tr>"
-    )
-    body_rows = []
-    failures = []
-    for (template, candidate), by_policy in sorted(cells.items()):
-        candidate_note = (
-            " <span class=chip>known-good</span>" if candidate == "reference" else ""
-        )
-        template_hint = FAULT_TEMPLATE_HINTS.get(template, "")
-        candidate_hint = CANDIDATE_HINTS.get(candidate, "")
-        row = [
-            f"<tr><td><span data-tip='{html.escape(template_hint)}'>"
-            f"{html.escape(template)}</span></td>"
-            f"<td><span data-tip='{html.escape(candidate_hint)}'>"
-            f"<code>{html.escape(candidate)}</code></span>{candidate_note}</td>"
-        ]
-        for policy in policies:
-            decision = by_policy.get(policy)
-            if decision is None:
-                row.append("<td class=cell-muted>—</td>")
-                continue
-            admitted = decision.get("admitted") is True
-            wrong = (
-                decision.get("false_admission") is True
-                or decision.get("missed_admission") is True
-            )
-            label = "admitted" if admitted else "rejected"
-            row.append(
-                f"<td class='{'cell-bad' if wrong else 'cell-ok'}'>"
-                f"{'✕' if wrong else '✓'} {label}</td>"
-            )
-            for failure in decision.get("held_out_failures") or []:
-                failures.append(
-                    f"<div class=held-out-failure><code>{html.escape(template)} / "
-                    f"{html.escape(candidate)} / {html.escape(policy)}</code>"
-                    f"<span class=why>{html.escape(str(failure))}</span></div>"
-                )
-        row.append("</tr>")
-        body_rows.append("".join(row))
-    correct = sum(
-        1
-        for decision in decisions
-        if not (
-            decision.get("false_admission") is True
-            or decision.get("missed_admission") is True
-        )
-    )
-    anatomy = (
-        "<details class=libsec><summary><b>How this experiment works</b> "
-        "<span class=muted>— open for a 30-second primer</span></summary>"
-        "<div class=lib-row><span class=k>fault</span><span>we break the "
-        "correct library on purpose, in one known way per row</span></div>"
-        "<div class=lib-row><span class=k>fix</span><span>we then offer "
-        "candidate fixes: <code>reference</code> is the right one, the "
-        "others are wrong on purpose — to see if the reviewer catches "
-        "them</span></div>"
-        "<div class=lib-row><span class=k>review</span><span>an "
-        "independent, deterministic reviewer (the curator) tests each fix "
-        "before letting it into the library; each column is one test "
-        "plan, from a single quick test to the full suite</span></div>"
-        "<div class=lib-row><span class=k>verdict</span><span>letting a "
-        "bad fix in is a <b>false admission</b>; rejecting the right fix "
-        "is a <b>missed admission</b></span></div>"
-        "<div class=lib-row><span class=k>re-check</span><span>accepted "
-        "fixes are re-tested later on scenes the reviewer never saw "
-        "(<b>held-out</b>)</span></div>"
-        "</details>"
-    )
-    summary = (
-        f"<span class=metric><b>decisions</b>: {len(decisions)}</span>"
-        f"<span class=metric><b>correct</b>: {correct}</span>"
-        f"<span class=metric><b>false/missed</b>: {len(decisions) - correct}</span>"
-        + anatomy
-        + _policy_summary_table(decisions, policies)
-    )
-    failures_html = ""
-    if failures:
-        failures_html = (
-            f"<details id=held-out-failures><summary>held-out failures"
-            f" ({len(failures)})</summary>{''.join(failures)}</details>"
-        )
-    return (
-        f"<div class=card>{summary}"
-        "<p class=explain>Every decision, one by one. Each row: one "
-        "injected fault, probed with one candidate fix. Each column: one "
-        "test plan, weakest to strictest. Green = the plan decided "
-        "correctly; red = it let a bad fix in or rejected the right one. "
-        "Hover any dotted name for what it means.</p>"
-        f"<div class=tablewrap><table>{header}{''.join(body_rows)}</table></div>"
-        f"{failures_html}</div>"
-    )
-
-
-FAULT_TEMPLATE_HINTS = {
-    "missing-close-operator": "the library never learned how to close a drawer",
-    "missing-open-operator": "the library never learned how to open a drawer",
-    "missing-opened-predicate": "the joint-state concept 'opened' (and everything using it) is gone",
-    "missing-closed-predicate": "the joint-state concept 'closed' (and everything using it) is gone",
-    "inverted-precondition": "open-drawer demands the drawer be already opened",
-    "wrong-add-effect": "open-drawer claims to achieve 'closed' instead of 'opened'",
-    "missing-delete-effect": "open-drawer forgets that opening un-closes the drawer",
-    "execution-binding-mismatch": "open-drawer requests the CLOSED target state",
-    "missing-reachability-precondition": "open-drawer no longer requires reachability",
-    "wrong-parameter-type": "open-drawer types its handle parameter as a drawer",
-    "contract-effect-conflict": "the articulation contract no longer covers the claimed effect",
-    "unsupported-navigation-library": "models drawer opening the mobile-robot way on a fixed arm",
-    "broken-grounding-binding": "'opened' references a grounding factory no reviewed catalog provides",
-    "combined-missing-close-and-delete-effect": "no close operator, and open-drawer also forgets to un-close",
-    "combined-misbinding-and-missing-close": "open-drawer requests CLOSED and the close operator is missing",
-}
-"""One-line summary per fault template (authoritative definitions live in
-experiments/icra/articulation/faults.py)."""
-
-CANDIDATE_HINTS = {
-    "reference": "the known-correct repair for the injected fault",
-    "missing-reachability-precondition": (
-        "deliberately faulty probe: reachability precondition removed, so it "
-        "claims success on out-of-reach targets"
-    ),
-    "misbound-execution-request": (
-        "deliberately faulty probe: the operator requests the opposite " "target state"
-    ),
-}
-"""One-line summary per E2 candidate patch (defined in
-experiments/icra/harness.py)."""
-
-POLICY_HINTS = {
-    "single-witness": "tests the fix only on the one scene where the failure happened",
-    "multi-context-positive": "tests the fix in several scenes, but only checks that it works",
-    "positive-negative": "also runs counterexamples that a bad fix would wrongly pass",
-    "positive-negative-boundary": "adds edge-case scenes on top of that",
-    "full-suite": "runs every test: working scenes, counterexamples, edge cases, and regression",
-}
-"""Hover definition per curation policy — plain words, no jargon."""
-
-
-def _policies_by_strictness(decisions: list[dict]) -> list[str]:
-    """Policies ordered by how many curator tests they run on average —
-    weakest first, so tables read as an escalation."""
-    tests: dict[str, list] = {}
-    for decision in decisions:
-        if decision.get("tests_run") is not None:
-            tests.setdefault(str(decision.get("policy", "?")), []).append(
-                decision["tests_run"]
-            )
-    return sorted(
-        {str(d.get("policy", "?")) for d in decisions},
-        key=lambda p: (sum(tests.get(p, [0])) / max(1, len(tests.get(p, [1]))), p),
-    )
-
-
-def _policy_th(policy: str) -> str:
-    hint = POLICY_HINTS.get(policy)
-    if hint:
-        return f"<th><span data-tip='{html.escape(hint)}'>{html.escape(policy)}</span></th>"
-    return f"<th>{html.escape(policy)}</th>"
-
-
-def _policy_summary_table(decisions: list[dict], policies: list[str]) -> str:
-    """Per-policy rates computed from the decision records, with the same
-    denominators as the pre-registered report: false admissions among
-    admitted patches, missed admissions among correct candidates."""
-    rows = []
-    for policy in policies:
-        subset = [d for d in decisions if str(d.get("policy", "?")) == policy]
-        if not subset:
-            continue
-        admitted = [d for d in subset if d.get("admitted") is True]
-        correct = [d for d in subset if d.get("behaviorally_correct") is True]
-        false_admissions = sum(1 for d in subset if d.get("false_admission") is True)
-        missed = sum(1 for d in subset if d.get("missed_admission") is True)
-        clean = sum(
-            1
-            for d in admitted
-            if d.get("held_out_evaluated") is True and not d.get("held_out_failures")
-        )
-        tests = [d.get("tests_run") for d in subset if d.get("tests_run") is not None]
-        mean_tests = sum(tests) / len(tests) if tests else 0.0
-        hint = POLICY_HINTS.get(policy, "")
-        rows.append(
-            f"<tr><td><span data-tip='{html.escape(hint)}'><code>{html.escape(policy)}</code></span></td>"
-            f"<td>{_rate_bar(false_admissions / max(1, len(admitted)), bad=True, count=f'{false_admissions}/{len(admitted)}')}</td>"
-            f"<td>{_rate_bar(missed / max(1, len(correct)), bad=True, count=f'{missed}/{len(correct)}')}</td>"
-            f"<td>{_rate_bar(clean / max(1, len(admitted)), count=f'{clean}/{len(admitted)}')}</td>"
-            f"<td>{mean_tests:.1f}</td></tr>"
-        )
-    if not rows:
-        return ""
-    return (
-        "<p class=explain>One row per test plan, weakest first. Stricter "
-        "plans run more tests and let fewer bad fixes through. Hover any "
-        "dotted term for its meaning; the numbers match the report "
-        "below.</p>"
-        "<div class=tablewrap><table><tr>"
-        "<th><span data-tip='the test plan the curator runs before "
-        "accepting or rejecting a fix'>curation policy</span></th>"
-        "<th><span data-tip='bad fixes that were accepted, out of all "
-        "fixes accepted — lower is better'>false admissions</span></th>"
-        "<th><span data-tip='good fixes that were wrongly rejected, out "
-        "of all good fixes offered — lower is better'>missed admissions</span></th>"
-        "<th><span data-tip='accepted fixes that later passed tests on "
-        "scenes the curator never saw — higher is better'>held-out clean</span></th>"
-        "<th><span data-tip='average number of tests the plan ran per "
-        "decision — its cost'>mean tests</span></th></tr>"
-        f"{''.join(rows)}</table></div>"
     )
 
 
@@ -4966,46 +3636,17 @@ def _json_block(data) -> str:
     return f"<pre class=wrap>{html.escape(json.dumps(data, indent=2, ensure_ascii=False))}</pre>"
 
 
-def _gate_verdict(path: Path) -> str:
-    """The verdict word from a gate_p2.txt headline ('' when unreadable).
-    Headlines vary ('Gate P2: DOWNGRADE to …', 'Gate P2 not decidable from
-    this record: …'), so match the known verdict words."""
-    try:
-        head = path.read_text(encoding="utf-8", errors="replace").strip()
-    except OSError:
-        return ""
-    head = head.splitlines()[0].strip() if head else ""
-    upper = head[:80].upper()
-    if "DOWNGRADE" in upper:
-        return "DOWNGRADE"
-    if "NOT DECIDABLE" in upper or "UNDECIDABLE" in upper:
-        return "undecided"
-    if "PASS" in upper:
-        return "PASS"
-    if ":" in head:
-        _, rest = head.split(":", 1)
-        words = rest.strip().split(None, 1)
-        return words[0] if words else ""
-    return head
-
-
 def _run_row_status(run_dir: Path, meta: dict) -> str:
-    """The outcome badge for one index row: the answer a reader scans the
-    list for — did this run succeed — without opening the run."""
+    """
+    The outcome badge for one index row: the answer a reader scans the list for — did
+    this run succeed — without opening the run.
+    """
     summary = meta.get("summary") or {}
     outcome = summary.get("outcome")
     if outcome in {"success", "failure"}:
         klass = "ok" if outcome == "success" else "bad"
         label = summary.get("label", outcome)
         return f"<span class='badge {klass}'>{html.escape(str(label))}</span>"
-    gate = run_dir / "gate_p2.txt"
-    if gate.is_file():
-        verdict = _gate_verdict(gate)
-        if verdict:
-            klass = "ok" if verdict.upper().startswith("PASS") else "warn"
-            return (
-                f"<span class='badge {klass}'>gate: " f"{html.escape(verdict)}</span>"
-            )
     succeeded = summary.get("succeeded")
     if succeeded is not None:
         return (
@@ -5029,7 +3670,9 @@ def _run_row_status(run_dir: Path, meta: dict) -> str:
 
 
 def _duration_text(meta: dict) -> str | None:
-    """'4m 28s' / '5h 51m' from run.json start and end stamps."""
+    """
+    '4m 28s' / '5h 51m' from run.json start and end stamps.
+    """
     try:
         delta = datetime.fromisoformat(str(meta["ended_at"])) - datetime.fromisoformat(
             str(meta["started_at"])
@@ -5083,6 +3726,23 @@ def main() -> None:
             "enables candidate review and local source materialization."
         ),
     )
+    parser.add_argument(
+        "--realization-workspace",
+        default=None,
+        help=(
+            "Local capability-realization review workspace. When supplied, the "
+            "Viewer lists realization candidates for approval."
+        ),
+    )
+    parser.add_argument(
+        "--contract-workspace",
+        default=None,
+        help=(
+            "Local capability-contract review workspace. When supplied, the Viewer "
+            "lists contract candidates for approval and admitted contracts join the "
+            "catalog."
+        ),
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=5000)
     parser.add_argument("--debug", action="store_true")
@@ -5101,11 +3761,21 @@ def main() -> None:
         )
         grounding_workspace = grounding_initialization.workspace
         grounding_vocabulary = grounding_initialization.reviewed_vocabulary
+    realization_workspace = None
+    if args.realization_workspace is not None:
+        realization_workspace = CoraplexRealizationWorkspace(
+            Path(args.realization_workspace)
+        )
+    contract_workspace = None
+    if args.contract_workspace is not None:
+        contract_workspace = CapabilityContractWorkspace(Path(args.contract_workspace))
     app = create_app(
         runs_root,
         library_dir=library_dir,
         grounding_workspace=grounding_workspace,
         grounding_vocabulary=grounding_vocabulary,
+        realization_workspace=realization_workspace,
+        contract_workspace=contract_workspace,
     )
     print(
         f"serving logs from {Path(args.runs_root).resolve()} at http://{args.host}:{args.port}"

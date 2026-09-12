@@ -5,11 +5,8 @@ Usage:
     uv run python -m experiments.resym.open_drawer apartment
     uv run python -m experiments.resym.open_drawer kitchen
     uv run python -m experiments.resym.open_drawer both
-    uv run python -m experiments.resym.open_drawer apartment coraplex
 
-The optional second argument selects the execution backend: ``kinematic``
-(default, direct world-state writes) or ``coraplex`` (CRAM action designators
-performed by giskard's QP controller under simulated execution).
+Execution uses Coraplex action designators performed by the simulated robot.
 """
 
 from __future__ import annotations
@@ -20,36 +17,33 @@ from pathlib import Path
 
 from typing_extensions import Optional
 
+from experiments.resym.articulation import (
+    articulation_connection,
+    is_articulated_object,
+    joint_fraction,
+)
 from experiments.resym.scenes import Scene, load_scene
 from experiments.resym.seed_library import (
     OPENED_FRACTION_THRESHOLD,
     build_seed_library,
 )
-from resym.planning.execution.engine import PlatformSkillRealization
-from resym.core.model import Literal, SymbolLibrary
+from resym.core.symbols import Literal, SymbolLibrary
 from resym.planning.pipeline import solve_task
 from resym.observability.runlog import RunRecorder
-from resym.platform.articulation import (
-    articulation_connection,
-    is_articulated_object,
-)
 from resym.platform.cram_objects import task_object_universe
+from experiments.resym.capability_realizations import default_capability_initialization
 from experiments.resym.grounding_initialization import default_drawer_grounding_catalog
-from resym.platform.kinematic import KinematicFeasibility
+from experiments.resym.drawer_kinematic_oracle import DrawerExperimentFeasibility
 from resym.platform.grounding_context import EvaluationContext
-from resym.platform.universe import (
-    joint_fraction,
-    pddl_name,
-)
+from resym.platform.universe import pddl_name
 
 
 def run_scene(
     scene: Scene,
     library: SymbolLibrary,
-    backend_name: str,
     recorder: Optional[RunRecorder] = None,
 ) -> dict:
-    print(f"\n=== scene: {scene.value} (backend: {backend_name}) ===")
+    print(f"\n=== scene: {scene.value} (backend: coraplex) ===")
     setup = load_scene(scene)
     universe = task_object_universe(setup.world, setup.robot)
     drawers = [
@@ -60,9 +54,8 @@ def run_scene(
     context = EvaluationContext(
         world=setup.world,
         robot=setup.robot,
-        profile=setup.profile,
         grounding_catalog=default_drawer_grounding_catalog(),
-        capability_feasibility=KinematicFeasibility(),
+        capability_feasibility=DrawerExperimentFeasibility(),
     )
     goal_drawer = pddl_name(scene.goal_drawer_body)
     goal = (Literal("opened", (goal_drawer,)),)
@@ -81,7 +74,7 @@ def run_scene(
         context=context,
         goal=goal,
         working_directory=Path(tempfile.mkdtemp(prefix=f"resym_{scene.value}_")),
-        realization=_build_realization(backend_name, context, event_sink),
+        realization=_build_realization(context, event_sink),
         event_sink=event_sink,
     )
 
@@ -114,29 +107,24 @@ def run_scene(
     }
 
 
-def _build_realization(
-    backend_name: str, context: EvaluationContext, event_sink=None
-) -> Optional[PlatformSkillRealization]:
+def _build_realization(context: EvaluationContext, event_sink=None):
     """
-    ``None`` selects the default kinematic backend inside the pipeline.
+    Build the Coraplex execution backend for the loaded CRAM world.
     """
-    if backend_name == "kinematic":
-        return None
     from resym.planning.execution.coraplex import (
         CoraplexSkillRealization,
     )
 
     return CoraplexSkillRealization.for_evaluation_context(
-        context, event_sink=event_sink
+        context, default_capability_initialization(), event_sink=event_sink
     )
 
 
 def main() -> None:
     choice = sys.argv[1] if len(sys.argv) > 1 else "both"
-    backend_name = sys.argv[2] if len(sys.argv) > 2 else "kinematic"
     recorder = RunRecorder.create(
         "open",
-        metadata={"demo": "open_drawer", "choice": choice, "backend": backend_name},
+        metadata={"demo": "open_drawer", "choice": choice, "backend": "coraplex"},
     )
     print(f"run logs: {recorder.directory}")
     library = build_seed_library(default_drawer_grounding_catalog())
@@ -147,10 +135,8 @@ def main() -> None:
         " -- reused across scenes"
     )
     scenes = [Scene.APARTMENT, Scene.KITCHEN] if choice == "both" else [Scene(choice)]
-    scene_summaries = [
-        run_scene(scene, library, backend_name, recorder=recorder) for scene in scenes
-    ]
-    recorder.finish({"backend": backend_name, "scenes": scene_summaries})
+    scene_summaries = [run_scene(scene, library, recorder=recorder) for scene in scenes]
+    recorder.finish({"backend": "coraplex", "scenes": scene_summaries})
     print(f"\nrun logs written to {recorder.directory}")
 
 

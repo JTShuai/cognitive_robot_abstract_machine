@@ -7,29 +7,34 @@ import inspect
 import pytest
 from krrood.adapters.json_serializer import from_json, to_json
 
-from resym.core.model import (
-    CapabilityRole,
-    CapabilityContract,
+from resym.core.capability_model import (
+    matching_capability_contracts,
     CapabilityRef,
+    CapabilityRole,
     ExecutionRequest,
-    Literal,
-    Operator,
     OperatorExecutionBinding,
     RoleBinding,
     contract_violations,
 )
-from resym.platform.capabilities import (
-    ARTICULATION_CAPABILITY_UID,
-    PLACE_CAPABILITY_UID,
-    articulation_capability_contract,
-    matching_capability_contracts,
-)
+from resym.core.symbols import Literal, Operator
+from resym.core.symbol_types import SymbolType
 from resym.planning.execution.coraplex import (
     CoraplexSkillRealization,
+    MissingRoleArgumentError,
     default_coraplex_capability_handlers,
 )
+from resym.platform.grounding_context import EvaluationContext
+from resym.platform.universe import GroundedObject, ObjectUniverse
 from resym.platform.coraplex_catalog import (
-    CORAPLEX_ADAPTER_CAPABILITY_UIDS,
+    NoApplicableRealizationError,
+    adapter_capability_uids,
+    applicable_registration,
+    initialize_coraplex_capabilities,
+    robot_resources,
+)
+from resym.platform.coraplex_realizations import (
+    CapabilityReviewStatus,
+    CoraplexRealizationWorkspace,
 )
 from resym.planning.execution.engine import (
     PlatformExecutionStatus,
@@ -37,16 +42,31 @@ from resym.planning.execution.engine import (
 )
 from resym.planning.pddl import GroundAction
 
-from resym.core.model import SymbolType
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
-from semantic_digital_twin.semantic_annotations.semantic_annotations import Drawer, Handle
-from semantic_digital_twin.world_description.world_entity import SemanticAnnotation
+from semantic_digital_twin.semantic_annotations.semantic_annotations import (
+    Drawer,
+    Handle,
+)
+from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
+from semantic_digital_twin.world_description.world_entity import (
+    Body,
+    SemanticAnnotation,
+)
+
+from .dataset.capability_model import (
+    ARTICULATION_CAPABILITY_UID,
+    PLACE_CAPABILITY_UID,
+    TRANSPORT_CAPABILITY_UID,
+    OpenCloseState,
+    articulation_capability_contract,
+    capability_contracts,
+)
+from .dataset.resource_bearing_robot import Robot
 
 DRAWER_TYPE = SymbolType.from_python_type(Drawer)
 HANDLE_TYPE = SymbolType.from_python_type(Handle)
 OBJECT_TYPE = SymbolType.from_python_type(SemanticAnnotation)
 ROBOT_TYPE = SymbolType.from_python_type(AbstractRobot)
-
 
 
 def articulation_operator(target_state: str) -> Operator:
@@ -109,7 +129,7 @@ def test_contract_carries_effect_to_constant_semantics():
 
 def test_complete_catalog_lookup_finds_contract_by_effect_and_typed_role():
     matches = matching_capability_contracts(
-        {"placed-at"}, {"patient": OBJECT_TYPE}
+        {"placed-at"}, {"patient": OBJECT_TYPE}, contracts=capability_contracts()
     )
 
     assert [contract.uid for contract in matches] == [PLACE_CAPABILITY_UID]
@@ -117,7 +137,9 @@ def test_complete_catalog_lookup_finds_contract_by_effect_and_typed_role():
 
 def test_catalog_lookup_rejects_contract_with_wrong_role_name():
     assert not matching_capability_contracts(
-        {"placed-at"}, {"articulated_part": OBJECT_TYPE}
+        {"placed-at"},
+        {"articulated_part": OBJECT_TYPE},
+        contracts=capability_contracts(),
     )
 
 
@@ -191,16 +213,57 @@ def test_coraplex_accepts_a_new_capability_handler_without_class_changes():
     assert realization.realize(request, context=None, universe=None) is marker
 
 
-def test_coraplex_adapter_registry_covers_every_reviewed_contract():
-    assert set(default_coraplex_capability_handlers()) == set(
-        CORAPLEX_ADAPTER_CAPABILITY_UIDS
+def test_articulation_request_must_bind_its_interaction_point(
+    capability_initialization,
+):
+    """
+    The adapter reads the contacted body from the bound role; it does not derive one
+    from the patient's semantic annotation.
+    """
+    pytest.importorskip("geometry_msgs")
+    universe = ObjectUniverse()
+    universe.add(
+        GroundedObject(
+            name="door4",
+            symbol_type=DRAWER_TYPE,
+            body=Body(name=PrefixedName("door4")),
+        )
     )
+    request = ExecutionRequest(
+        CapabilityRef(ARTICULATION_CAPABILITY_UID),
+        (
+            ("actor", "robot1"),
+            ("patient", "door4"),
+            ("target_state", OpenCloseState.OPEN),
+        ),
+    )
+
+    context = EvaluationContext(
+        world=None, robot=Robot(mobile=True), grounding_catalog=None
+    )
+
+    with pytest.raises(MissingRoleArgumentError):
+        CoraplexSkillRealization(
+            plan_context=None,
+            capability_handlers=default_coraplex_capability_handlers(
+                capability_initialization
+            ),
+        ).realize(request, context=context, universe=universe)
+
+
+def test_coraplex_adapter_registry_covers_every_admitted_realization(
+    capability_initialization,
+):
+    assert set(
+        default_coraplex_capability_handlers(capability_initialization)
+    ) == adapter_capability_uids(capability_initialization)
 
 
 def test_coraplex_adapter_arguments_match_native_action_signatures():
     """
     Catch Coraplex API drift before a request reaches the robot.
     """
+    pytest.importorskip("geometry_msgs")
     from coraplex.robot_plans.actions.composite.tool_based import (
         CuttingAction,
         MixingAction,
@@ -264,3 +327,66 @@ def test_coraplex_adapter_arguments_match_native_action_signatures():
     }
     for action, names in expected.items():
         assert names.issubset(inspect.signature(action).parameters), action.__name__
+
+
+def transport_registrations(initialization):
+    return tuple(
+        record
+        for record in initialization.records
+        if record.status is CapabilityReviewStatus.APPROVED
+        and record.contract.uid == TRANSPORT_CAPABILITY_UID
+    )
+
+
+def test_transport_variant_follows_the_catalog_robot_resource_model(
+    capability_initialization,
+):
+    """
+    Whether transport drives to the target is decided by the same robot-resource model
+    the capability catalog reports: a mobile base selects the driving variant.
+    """
+    request = ExecutionRequest(CapabilityRef(TRANSPORT_CAPABILITY_UID), ())
+    registrations = transport_registrations(capability_initialization)
+
+    mobile = applicable_registration(
+        registrations, request, robot_resources(Robot(mobile=True))
+    )
+    fixed = applicable_registration(
+        registrations, request, robot_resources(Robot(mobile=False))
+    )
+
+    assert mobile.draft.action_class.endswith(".TransportAction")
+    assert fixed.draft.action_class.endswith(".PickAndPlaceAction")
+
+
+def test_no_variant_fits_a_robot_without_the_required_resources(
+    capability_initialization,
+):
+    request = ExecutionRequest(CapabilityRef(TRANSPORT_CAPABILITY_UID), ())
+
+    with pytest.raises(NoApplicableRealizationError):
+        applicable_registration(
+            transport_registrations(capability_initialization), request, frozenset()
+        )
+
+
+def test_unadmitted_capability_is_reported_as_unsupported(tmp_path):
+    """
+    With an empty review workspace no capability can execute, whatever contracts the
+    library carries.
+    """
+    handlers = default_coraplex_capability_handlers(
+        initialize_coraplex_capabilities(
+            capability_contracts(), CoraplexRealizationWorkspace(tmp_path / "workspace")
+        )
+    )
+    result = CoraplexSkillRealization(
+        plan_context=None, capability_handlers=handlers
+    ).execute(
+        ExecutionRequest(CapabilityRef(ARTICULATION_CAPABILITY_UID), ()),
+        context=None,
+        universe=None,
+    )
+
+    assert result.status is PlatformExecutionStatus.UNSUPPORTED
+    assert result.code == "CORAPLEX_CAPABILITY_NOT_IMPLEMENTED"

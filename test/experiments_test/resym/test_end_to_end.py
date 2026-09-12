@@ -9,23 +9,26 @@ from __future__ import annotations
 
 import pytest
 
+from experiments.resym.articulation import (
+    articulation_connection,
+    set_joint_fraction,
+)
 from resym.planning.execution.coraplex import CoraplexSkillRealization
 from experiments.resym.scenes import Scene, load_scene
+from experiments.resym.capability_realizations import default_capability_initialization
 from experiments.resym.seed_library import build_seed_library
 from resym.platform.grounding_context import EvaluationContext
-from resym.platform.kinematic import KinematicFeasibility
-from resym.platform.articulation import articulation_connection
+from experiments.resym.drawer_kinematic_oracle import DrawerExperimentFeasibility
 from resym.planning.execution.engine import ExecutionViolation, execute
-from resym.core.model import Literal
+from resym.core.symbols import Literal
 from resym.planning.pddl import GroundAction
 from resym.planning.pipeline import solve_task
 from resym.platform.universe import (
     ObjectUniverse,
     pddl_name,
-    set_joint_fraction,
 )
 from .conftest import drawer_universe_extractors
-from resym.platform.kinematic import KinematicSkillRealization
+from experiments.resym.drawer_kinematic_oracle import DrawerExperimentRealization
 
 GOAL_DRAWER = "cabinet10_drawer_top"
 GOAL_HANDLE = "handle_cab10_t"
@@ -77,7 +80,7 @@ def test_declared_truth_plan_is_refused_by_recomputed_preconditions(
         library,
         apartment_universe,
         apartment_context,
-        realization=KinematicSkillRealization(),
+        realization=DrawerExperimentRealization(),
     )
     assert not report.succeeded
     assert report.violation in (
@@ -97,7 +100,7 @@ def test_computed_truth_pipeline_opens_the_drawer(
         context=apartment_context,
         goal=goal,
         working_directory=tmp_path,
-        realization=KinematicSkillRealization(),
+        realization=DrawerExperimentRealization(),
     )
     assert result.execution.succeeded
     assert [action.operator for action in result.plan] == ["navigate", "open-drawer"]
@@ -125,9 +128,8 @@ def test_coraplex_backend_performs_the_plan_with_cram_designators(
     context = EvaluationContext(
         world=setup.world,
         robot=setup.robot,
-        profile=setup.profile,
         grounding_catalog=grounding_catalog,
-        capability_feasibility=KinematicFeasibility(),
+        capability_feasibility=DrawerExperimentFeasibility(),
     )
     events = []
 
@@ -141,7 +143,7 @@ def test_coraplex_backend_performs_the_plan_with_cram_designators(
         goal=(Literal("opened", (pddl_name(GOAL_DRAWER),)),),
         working_directory=tmp_path,
         realization=CoraplexSkillRealization.for_evaluation_context(
-            context, event_sink=event_sink
+            context, default_capability_initialization(), event_sink=event_sink
         ),
         event_sink=event_sink,
     )

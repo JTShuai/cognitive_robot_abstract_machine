@@ -1,0 +1,1324 @@
+{
+  "contracts": [
+    {
+      "__json_type__": "resym.core.capability_model.CapabilityContract",
+      "uid": "resym:ReachInteraction",
+      "label": "navigation.reach-interaction",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations.Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "patient",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        }
+      ],
+      "success_relation": "ready_to_interact(actor, patient)",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/ready-to-interact",
+          "version": "1",
+          "local_name": "ready-to-interact"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#Navigating",
+        "source_version": "soma@2.1.0",
+        "decided_by": "llm-agent",
+        "decision_model": "codex",
+        "rationale": "The local capability is narrower than SOMA Navigating: it moves the robot to a witness pose from which it can interact with a task object.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#Navigating"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": []
+    },
+    {
+      "__json_type__": "resym.core.capability_model.CapabilityContract",
+      "uid": "resym:ArticulationStateChange",
+      "label": "articulation.state-transition",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations.Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "patient",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.mixins.HasMechanicalJoint"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "interaction_point",
+          "required": false,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations.Handle"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "target_state",
+          "required": true,
+          "allowed_values": [
+            "OPEN",
+            "CLOSED"
+          ],
+          "accepted_symbol_types": []
+        }
+      ],
+      "success_relation": "articulation_state(patient) == target_state",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/opened",
+          "version": "1",
+          "local_name": "opened"
+        },
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/closed",
+          "version": "1",
+          "local_name": "closed"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#StateTransition",
+        "source_version": "soma@2.1.0",
+        "decided_by": "llm-agent",
+        "decision_model": "codex",
+        "rationale": "The local capability is a state transition restricted to an articulated patient and the OPEN/CLOSED target states; SOMA Opening and Closing support the target-specific readings.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#StateTransition",
+          "http://www.ease-crc.org/ont/SOMA.owl#Opening",
+          "http://www.ease-crc.org/ont/SOMA.owl#Closing"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": [
+        [
+          "opened",
+          "target_state",
+          "OPEN"
+        ],
+        [
+          "closed",
+          "target_state",
+          "CLOSED"
+        ]
+      ]
+    },
+    {
+      "__json_type__": "resym.core.capability_model.CapabilityContract",
+      "uid": "resym:BaseNavigation",
+      "label": "navigation.move-base",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations.Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "destination",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        }
+      ],
+      "success_relation": "at_location(actor, destination)",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/at-location",
+          "version": "1",
+          "local_name": "at-location"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#Navigating",
+        "source_version": "soma@2.1.0",
+        "decided_by": "platform-maintainer",
+        "decision_model": null,
+        "rationale": "Base motion to a designated destination.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#Navigating"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": []
+    },
+    {
+      "__json_type__": "resym.core.capability_model.CapabilityContract",
+      "uid": "resym:VisualAttention",
+      "label": "attention.look-at",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations.Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "target",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        }
+      ],
+      "success_relation": "looking_at(actor, target)",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/looking-at",
+          "version": "1",
+          "local_name": "looking-at"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#LookingAt",
+        "source_version": "soma@2.1.0",
+        "decided_by": "platform-maintainer",
+        "decision_model": null,
+        "rationale": "Directing the robot's sensing frame toward a target.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#LookingAt"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": []
+    },
+    {
+      "__json_type__": "resym.core.capability_model.CapabilityContract",
+      "uid": "resym:ObjectDetection",
+      "label": "perception.detect-object",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations.Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "target",
+          "required": false,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "region",
+          "required": false,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        }
+      ],
+      "success_relation": "perceived(target)",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/perceived",
+          "version": "1",
+          "local_name": "perceived"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#Perceiving",
+        "source_version": "soma@2.1.0",
+        "decided_by": "platform-maintainer",
+        "decision_model": null,
+        "rationale": "Acquiring an object observation in a bounded region.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#Perceiving"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": []
+    },
+    {
+      "__json_type__": "resym.core.capability_model.CapabilityContract",
+      "uid": "resym:EndEffectorReach",
+      "label": "manipulation.reach",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations.Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "target",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        }
+      ],
+      "success_relation": "reached(actor, target)",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/reached",
+          "version": "1",
+          "local_name": "reached"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#Reaching",
+        "source_version": "soma@2.1.0",
+        "decided_by": "platform-maintainer",
+        "decision_model": null,
+        "rationale": "Moving an end effector to a target.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#Reaching"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": []
+    },
+    {
+      "__json_type__": "resym.core.capability_model.CapabilityContract",
+      "uid": "resym:ObjectGrasp",
+      "label": "manipulation.grasp",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations.Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "patient",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        }
+      ],
+      "success_relation": "grasped(actor, patient)",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/grasped",
+          "version": "1",
+          "local_name": "grasped"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#Grasping",
+        "source_version": "soma@2.1.0",
+        "decided_by": "platform-maintainer",
+        "decision_model": null,
+        "rationale": "Establishing a grasp on an object.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#Grasping"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": []
+    },
+    {
+      "__json_type__": "resym.core.capability_model.CapabilityContract",
+      "uid": "resym:ObjectPickup",
+      "label": "manipulation.pick-up",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations.Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "patient",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        }
+      ],
+      "success_relation": "holding(actor, patient)",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/holding",
+          "version": "1",
+          "local_name": "holding"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#PickingUp",
+        "source_version": "soma@2.1.0",
+        "decided_by": "platform-maintainer",
+        "decision_model": null,
+        "rationale": "Grasping and lifting an object.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#PickingUp"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": []
+    },
+    {
+      "__json_type__": "resym.core.capability_model.CapabilityContract",
+      "uid": "resym:ObjectPlacement",
+      "label": "manipulation.place",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations.Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "patient",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "destination",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        }
+      ],
+      "success_relation": "placed_at(patient, destination)",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/placed-at",
+          "version": "1",
+          "local_name": "placed-at"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#Placing",
+        "source_version": "soma@2.1.0",
+        "decided_by": "platform-maintainer",
+        "decision_model": null,
+        "rationale": "Placing an object at a designated destination.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#Placing"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": []
+    },
+    {
+      "__json_type__": "resym.core.capability_model.CapabilityContract",
+      "uid": "resym:ObjectTransport",
+      "label": "manipulation.transport",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations.Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "patient",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "destination",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        }
+      ],
+      "success_relation": "transported_to(patient, destination)",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/transported-to",
+          "version": "1",
+          "local_name": "transported-to"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#Transporting",
+        "source_version": "soma@2.1.0",
+        "decided_by": "platform-maintainer",
+        "decision_model": null,
+        "rationale": "Moving an object to a destination.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#Transporting"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": []
+    },
+    {
+      "__json_type__": "resym.core.capability_model.CapabilityContract",
+      "uid": "resym:GripperStateChange",
+      "label": "robot.gripper-state-transition",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations.Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "gripper",
+          "required": true,
+          "allowed_values": [
+            "LEFT",
+            "RIGHT",
+            "BOTH"
+          ],
+          "accepted_symbol_types": []
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "target_state",
+          "required": true,
+          "allowed_values": [
+            "OPEN",
+            "CLOSE"
+          ],
+          "accepted_symbol_types": []
+        }
+      ],
+      "success_relation": "gripper_state(actor, gripper) == target_state",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/gripper-open",
+          "version": "1",
+          "local_name": "gripper-open"
+        },
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/gripper-closed",
+          "version": "1",
+          "local_name": "gripper-closed"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#StateTransition",
+        "source_version": "soma@2.1.0",
+        "decided_by": "platform-maintainer",
+        "decision_model": null,
+        "rationale": "Changing a selected gripper's state.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#StateTransition"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": [
+        [
+          "gripper-open",
+          "target_state",
+          "OPEN"
+        ],
+        [
+          "gripper-closed",
+          "target_state",
+          "CLOSE"
+        ]
+      ]
+    },
+    {
+      "__json_type__": "resym.core.capability_model.CapabilityContract",
+      "uid": "resym:ArmPostureChange",
+      "label": "robot.park-arms",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations.Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "arm",
+          "required": true,
+          "allowed_values": [
+            "LEFT",
+            "RIGHT",
+            "BOTH"
+          ],
+          "accepted_symbol_types": []
+        }
+      ],
+      "success_relation": "arms_parked(actor, arm)",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/arms-parked",
+          "version": "1",
+          "local_name": "arms-parked"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#ParkingArms",
+        "source_version": "soma@2.1.0",
+        "decided_by": "platform-maintainer",
+        "decision_model": null,
+        "rationale": "Moving selected arms to their parked posture.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#ParkingArms"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": []
+    },
+    {
+      "__json_type__": "resym.core.capability_model.CapabilityContract",
+      "uid": "resym:TorsoStateChange",
+      "label": "robot.torso-state-transition",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations.Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "target_state",
+          "required": true,
+          "allowed_values": [
+            "LOW",
+            "MID",
+            "HIGH"
+          ],
+          "accepted_symbol_types": []
+        }
+      ],
+      "success_relation": "torso_state(actor) == target_state",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/torso-low",
+          "version": "1",
+          "local_name": "torso-low"
+        },
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/torso-mid",
+          "version": "1",
+          "local_name": "torso-mid"
+        },
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/torso-high",
+          "version": "1",
+          "local_name": "torso-high"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#PosturalMoving",
+        "source_version": "soma@2.1.0",
+        "decided_by": "platform-maintainer",
+        "decision_model": null,
+        "rationale": "Changing the robot torso posture.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#PosturalMoving"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": [
+        [
+          "torso-low",
+          "target_state",
+          "LOW"
+        ],
+        [
+          "torso-mid",
+          "target_state",
+          "MID"
+        ],
+        [
+          "torso-high",
+          "target_state",
+          "HIGH"
+        ]
+      ]
+    },
+    {
+      "__json_type__": "resym.core.capability_model.CapabilityContract",
+      "uid": "resym:CarryPosture",
+      "label": "robot.adopt-carry-posture",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations.Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "arm",
+          "required": true,
+          "allowed_values": [
+            "LEFT",
+            "RIGHT",
+            "BOTH"
+          ],
+          "accepted_symbol_types": []
+        }
+      ],
+      "success_relation": "carrying_posture(actor, arm)",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/carrying-posture",
+          "version": "1",
+          "local_name": "carrying-posture"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#PosturalMoving",
+        "source_version": "soma@2.1.0",
+        "decided_by": "platform-maintainer",
+        "decision_model": null,
+        "rationale": "Moving an arm to a carrying posture.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#PosturalMoving"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": []
+    },
+    {
+      "__json_type__": "resym.core.capability_model.CapabilityContract",
+      "uid": "resym:ToolPathFollowing",
+      "label": "manipulation.follow-tool-path",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations.Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "tool",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "target",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        }
+      ],
+      "success_relation": "tool_path_completed(tool, target)",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/tool-path-completed",
+          "version": "1",
+          "local_name": "tool-path-completed"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#Reaching",
+        "source_version": "soma@2.1.0",
+        "decided_by": "platform-maintainer",
+        "decision_model": null,
+        "rationale": "Following a path with a robot tool frame.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#Reaching"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": []
+    },
+    {
+      "__json_type__": "resym.core.capability_model.CapabilityContract",
+      "uid": "resym:MaterialMixing",
+      "label": "material.mix",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations.Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "patient",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "tool",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        }
+      ],
+      "success_relation": "mixed(patient)",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/mixed",
+          "version": "1",
+          "local_name": "mixed"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#Mixing",
+        "source_version": "soma@2.1.0",
+        "decided_by": "platform-maintainer",
+        "decision_model": null,
+        "rationale": "Mixing material in a patient object with a tool.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#Mixing"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": []
+    },
+    {
+      "__json_type__": "resym.core.capability_model.CapabilityContract",
+      "uid": "resym:MaterialPouring",
+      "label": "material.pour",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations.Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "source",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "destination",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        }
+      ],
+      "success_relation": "poured_into(source, destination)",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/poured-into",
+          "version": "1",
+          "local_name": "poured-into"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#Pouring",
+        "source_version": "soma@2.1.0",
+        "decided_by": "platform-maintainer",
+        "decision_model": null,
+        "rationale": "Pouring material from a source into a destination.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#Pouring"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": []
+    },
+    {
+      "__json_type__": "resym.core.capability_model.CapabilityContract",
+      "uid": "resym:MaterialCutting",
+      "label": "material.cut",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations.Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "patient",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "tool",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        }
+      ],
+      "success_relation": "cut(patient)",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/cut",
+          "version": "1",
+          "local_name": "cut"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#Cutting",
+        "source_version": "soma@2.1.0",
+        "decided_by": "platform-maintainer",
+        "decision_model": null,
+        "rationale": "Cutting a patient object with a tool.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#Cutting"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": []
+    },
+    {
+      "__json_type__": "resym.core.capability_model.CapabilityContract",
+      "uid": "resym:SurfaceWiping",
+      "label": "material.wipe-surface",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations.Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "surface",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "tool",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        }
+      ],
+      "success_relation": "wiped(surface)",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/wiped",
+          "version": "1",
+          "local_name": "wiped"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#Cleaning",
+        "source_version": "soma@2.1.0",
+        "decided_by": "platform-maintainer",
+        "decision_model": null,
+        "rationale": "Cleaning a surface by wiping it with a tool.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#Cleaning"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": []
+    },
+    {
+      "__json_type__": "resym.core.capability_model.CapabilityContract",
+      "uid": "resym:ElevatorNavigation",
+      "label": "navigation.move-between-levels",
+      "roles": [
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "actor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.semantic_annotations.semantic_annotations.Agent"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "elevator",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        },
+        {
+          "__json_type__": "resym.core.capability_model.CapabilityRole",
+          "name": "target_floor",
+          "required": true,
+          "allowed_values": [],
+          "accepted_symbol_types": [
+            {
+              "__json_type__": "resym.core.symbol_types.SymbolType",
+              "python_type_ref": "semantic_digital_twin.world_description.world_entity.SemanticAnnotation"
+            }
+          ]
+        }
+      ],
+      "success_relation": "at_level(actor, target_floor)",
+      "verifiable_effects": [
+        {
+          "__json_type__": "resym.core.predicate_refs.PredicateRef",
+          "uid": "resym:predicate/at-level",
+          "version": "1",
+          "local_name": "at-level"
+        }
+      ],
+      "version": "1",
+      "ontology_alignment": {
+        "__json_type__": "resym.core.provenance.OntologyAlignment",
+        "relation": "SPECIALIZATION",
+        "target_iri": "http://www.ease-crc.org/ont/SOMA.owl#Navigating",
+        "source_version": "soma@2.1.0",
+        "decided_by": "platform-maintainer",
+        "decision_model": null,
+        "rationale": "Moving the robot between building levels by elevator.",
+        "evidence_iris": [
+          "http://www.ease-crc.org/ont/SOMA.owl#Navigating"
+        ],
+        "human_reviewed": false,
+        "human_reviewer": null
+      },
+      "effect_role_values": []
+    }
+  ]
+}

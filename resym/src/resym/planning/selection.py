@@ -10,12 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from resym.core.model import (
-    Literal,
-    Operator,
-    PredicateSymbol,
-    SymbolLibrary,
-)
+from resym.core.symbols import Literal, Operator, PredicateSymbol, SymbolLibrary
 
 
 @dataclass

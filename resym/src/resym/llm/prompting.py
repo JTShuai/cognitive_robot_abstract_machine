@@ -12,13 +12,9 @@ from __future__ import annotations
 from pathlib import Path
 from string import Template
 
-from resym.core.model import (
-    BindingSource,
-    Literal,
-    SymbolLibrary,
-    SymbolType,
-    is_symbol_subtype,
-)
+from resym.core.capability_model import BindingSource, RoleBinding
+from resym.core.symbols import Literal, SymbolLibrary
+from resym.core.symbol_types import SymbolType, is_symbol_subtype
 
 PROMPT_DIRECTORY = Path(__file__).resolve().parent / "prompts"
 """
@@ -65,9 +61,7 @@ def render_operators(library: SymbolLibrary) -> str:
         )
         binding = operator.execution_binding
         role_bindings = ", ".join(
-            f"{role} <- "
-            f"{'?' + value.value if value.source is BindingSource.PARAMETER else repr(value.value)}"
-            for role, value in binding.role_bindings
+            render_role_binding(role, value) for role, value in binding.role_bindings
         )
         lines.append(
             f"- {operator.name}({parameters}): {preconditions} -> {effects}; "
@@ -76,6 +70,15 @@ def render_operators(library: SymbolLibrary) -> str:
             f"({role_bindings})"
         )
     return "\n".join(lines)
+
+
+def render_role_binding(role: str, binding: RoleBinding) -> str:
+    """
+    Render one capability role binding, quoting constants by their value.
+    """
+    if binding.source is BindingSource.PARAMETER:
+        return f"{role} <- ?{binding.value}"
+    return f"{role} <- {str(binding.value)!r}"
 
 
 def render_symbol_types(symbol_types: tuple[SymbolType, ...]) -> str:

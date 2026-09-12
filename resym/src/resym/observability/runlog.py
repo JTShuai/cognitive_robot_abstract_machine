@@ -7,8 +7,6 @@ sub-directory per stage:
 * ``A_world``       -- Stage A: the kinematic world / object universe a run starts from.
 * ``B_repair``      -- Stage B: planning-model agent and baseline transcripts.
 * ``C_solve``       -- Stage C: the per-task solve loop (goal, projected PDDL, plan, execution).
-* ``D_experiment``  -- E1/E2 episode and decision records.
-
 Recording is opt-in and injected exactly like
 :class:`~resym.llm.transcript.TranscriptRecorder`: a demo (or any
 caller) creates a :class:`RunRecorder` and hands stage data to it. Nothing in the
@@ -33,7 +31,7 @@ from pydantic import BaseModel
 from typing_extensions import TYPE_CHECKING, Any, Callable, Optional
 
 if TYPE_CHECKING:
-    from resym.core.model import Literal, SymbolLibrary
+    from resym.core.symbols import Literal, SymbolLibrary
     from resym.planning.pddl import GroundAction
     from resym.planning.pipeline import TaskResult
     from resym.planning.execution.engine import ExecutionReport
@@ -42,8 +40,6 @@ if TYPE_CHECKING:
 STAGE_WORLD = "A_world"
 STAGE_REPAIR = "B_repair"
 STAGE_SOLVE = "C_solve"
-STAGE_EXPERIMENT = "D_experiment"
-
 DEFAULT_RUNS_DIR = "runs"
 """
 Runs root when neither an explicit root nor ``RESYM_RUNS_DIR`` is given.
@@ -235,6 +231,18 @@ class RunRecorder:
                 json.dumps(entry, ensure_ascii=False, default=_json_default) + "\n"
             )
 
+    def append_jsonl(self, stage: str, relative_path: str, record: Any) -> Path:
+        """
+        Append one JSON record under a caller-defined stage and path.
+        """
+        path = self.stage_dir(stage) / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(
+                json.dumps(record, ensure_ascii=False, default=_json_default) + "\n"
+            )
+        return path
+
     # -- stage A --------------------------------------------------------------
 
     def record_world(
@@ -244,7 +252,7 @@ class RunRecorder:
         Stage A: the object universe (and scene name) a run starts from.
 
         ``name`` namespaces the artifact into ``A_world/<name>/`` so a run that loads
-        several worlds (e.g. open_drawer's ``both``) keeps them apart.
+        several worlds keeps them apart.
         """
         self.event(STAGE_WORLD, "world_loaded", {"scene": scene, "name": name})
         relative = "universe.json" if name is None else f"{name}/universe.json"
@@ -340,20 +348,6 @@ class RunRecorder:
             self.artifact(STAGE_SOLVE, f"{name}/domain.pddl", domain)
         if problem:
             self.artifact(STAGE_SOLVE, f"{name}/problem.pddl", problem)
-
-    # -- stage D --------------------------------------------------------------
-
-    def record_episode(self, record: dict) -> None:
-        """
-        Stage D: one experiment episode/decision (the §11 record fields), appended to
-        ``D_experiment/episodes.jsonl`` — every failure, budget exhaustion, and
-        unsupported episode is kept, none is filtered.
-        """
-        path = self.stage_dir(STAGE_EXPERIMENT) / "episodes.jsonl"
-        with path.open("a", encoding="utf-8") as stream:
-            stream.write(
-                json.dumps(record, ensure_ascii=False, default=_json_default) + "\n"
-            )
 
     # -- lifecycle ------------------------------------------------------------
 

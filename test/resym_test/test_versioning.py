@@ -11,15 +11,11 @@ import json
 import pytest
 from krrood.adapters.exceptions import MissingTypeError
 
-from resym.core.model import (
-    Literal,
-    Operator,
-    PredicateRef,
-    PredicateSymbol,
-    Provenance,
-    SymbolLibrary,
-    contract_violations,
-)
+from resym.core.capability_model import contract_violations
+from resym.core.predicate_refs import PredicateRef
+from resym.core.provenance import Provenance
+from resym.core.symbols import Literal, Operator, PredicateSymbol, SymbolLibrary
+from resym.core.symbol_types import SymbolType
 from .capability_helpers import capability_contract, execution_binding
 from .grounding_helpers import STUB_GROUNDING_PLAN
 from resym.repair.versioning import (
@@ -31,7 +27,6 @@ from resym.repair.versioning import (
     VersionedLibraryStore,
 )
 
-from resym.core.model import SymbolType
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Drawer
 
 DRAWER_TYPE = SymbolType.from_python_type(Drawer)

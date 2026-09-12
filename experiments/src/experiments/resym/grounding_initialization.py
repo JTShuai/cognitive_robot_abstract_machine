@@ -13,8 +13,13 @@ from __future__ import annotations
 from pathlib import Path
 from dataclasses import replace
 
-from resym import PROJECT_ROOT
-from resym.core.grounding import (
+from experiments.resym.articulation import (
+    articulation_connection,
+    interaction_point_belongs_to,
+    joint_fraction,
+)
+from experiments import EXPERIMENTS_ROOT
+from resym.core.grounding_model import (
     GroundingFactoryCandidate,
     GroundingFactoryParameter,
     GroundingFactoryParameterType,
@@ -23,24 +28,19 @@ from resym.core.grounding import (
     text_checksum,
 )
 from resym.interfaces.grounding_drafting import GroundingFactoryRequest
-from resym.platform.articulation import (
-    articulation_connection,
-    interaction_point_belongs_to,
-)
-from resym.platform.capabilities import (
+from experiments.resym.capability_contracts import (
     ARTICULATED_PART_TYPE,
     HANDLE_TYPE,
-    capability_contracts,
 )
+from experiments.resym.capability_initialization import default_capability_contracts
 from resym.platform.grounding_catalog import (
     GroundingFactoryCatalog,
     GroundingFactoryWorkspace,
     helper_vocabulary,
 )
-from resym.platform.kinematic import KINEMATIC_FEASIBILITY
-from resym.platform.universe import joint_fraction
+from experiments.resym.drawer_kinematic_oracle import DRAWER_FEASIBILITY
 
-DEFAULT_WORKSPACE_ROOT = PROJECT_ROOT / "tmp" / "grounding_factory_workspace"
+DEFAULT_WORKSPACE_ROOT = EXPERIMENTS_ROOT / "tmp" / "grounding_factory_workspace"
 """
 Standard local review workspace of the drawer experiments.
 """
@@ -56,7 +56,7 @@ GROUNDING_QUERY_HELPERS = (
     joint_fraction,
 )
 """
-Platform query helpers this domain asks to have in the EQL vocabulary.
+Domain query helpers this experiment asks to have in the EQL vocabulary.
 """
 
 JOINT_FRACTION_OPENED_UID = "resym:grounding/joint-fraction-opened"
@@ -179,8 +179,8 @@ def bootstrap_drawer_grounding(
         )
     return GroundingFactoryCatalog.load(
         workspace=workspace,
-        capability_contracts=capability_contracts(),
-        capability_feasibility_implementations=KINEMATIC_FEASIBILITY,
+        capability_contracts=default_capability_contracts(),
+        capability_feasibility_implementations=DRAWER_FEASIBILITY,
     )
 
 

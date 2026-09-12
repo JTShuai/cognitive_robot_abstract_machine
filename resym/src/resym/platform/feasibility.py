@@ -2,7 +2,7 @@
 Capability feasibility as predicate truth.
 
 A feasibility grounding factory is derived from one reviewed capability contract: its
-truth procedure asks the embodiment's feasibility oracle whether that capability can
+truth procedure asks the platform's feasibility oracle whether that capability can
 currently be realized for the bound objects. The platform therefore carries no
 predicate-specific truth code — which feasibility questions exist follows entirely from
 the capability catalog produced at initialization.
@@ -15,8 +15,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 
-from resym.core.capabilities import CapabilityContract
-from resym.core.grounding import (
+from resym.core.capability_model import CapabilityContract
+from resym.core.grounding_model import (
     GroundingFactoryOrigin,
     GroundingFactoryProcedure,
     GroundingFactoryRole,
@@ -48,7 +48,7 @@ def feasibility_factory_uid(capability_uid: str) -> str:
 
 class CapabilityFeasibility(ABC):
     """
-    Answers whether an embodiment can currently realize a capability for concrete
+    Answers whether a robot platform can currently realize a capability for concrete
     objects.
     """
 
@@ -62,7 +62,7 @@ class CapabilityFeasibility(ABC):
         """
         Decide feasibility of one capability for one bound object tuple.
 
-        Raises :class:`~resym.core.grounding.GroundingFailure` when the question cannot
+        Raises :class:`~resym.core.grounding_model.GroundingFailure` when the question cannot
         be answered with a Boolean.
         """
 

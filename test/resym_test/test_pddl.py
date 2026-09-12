@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from resym.core.model import Literal
+from resym.core.symbols import Literal
 from resym.planning import pddl
 from resym.planning.pddl import (
     FAST_DOWNWARD_DIRECTORY_ENVIRONMENT_VARIABLE,
@@ -30,7 +30,7 @@ def test_domain_contains_selected_schemas(library):
     assert "(:action navigate" in domain
     assert "(:action open-drawer" in domain
     assert "(:requirements :strips :negative-preconditions)" in domain
-    assert "(ready-to-open ?a ?b)" in domain
+    assert "(ready-to-interact ?a ?b)" in domain
     assert "(cram-type-abstract-robot " in domain
 
 

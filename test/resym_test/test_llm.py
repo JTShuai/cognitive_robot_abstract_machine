@@ -26,7 +26,7 @@ from resym.llm.structured import (
 )
 from resym.llm.transcript import TranscriptRecorder
 
-from resym.core.model import SymbolType
+from resym.core.symbol_types import SymbolType
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
 from semantic_digital_twin.semantic_annotations.mixins import HasMechanicalJoint
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
@@ -352,7 +352,7 @@ class TestProposalSchemas:
     def test_literal_edits_change_one_precondition_without_replacing_the_list(
         self, fixed_arm_library
     ):
-        from resym.core.model import Literal
+        from resym.core.symbols import Literal
         from resym.llm.schemas import OperatorProposal
 
         original = fixed_arm_library.operators["open-drawer"]
@@ -393,7 +393,7 @@ class TestProposalSchemas:
 
         updated = proposal.to_operator(corrupted)
 
-        assert Literal("ready-to-open", ("r", "d")) in updated.preconditions
+        assert Literal("ready-to-interact", ("r", "d")) in updated.preconditions
         assert Literal("handle-of", ("h", "d")) in updated.preconditions
         assert Literal("closed", ("d",)) in updated.preconditions
         assert wrong not in updated.preconditions
@@ -491,9 +491,9 @@ class TestPromptListings:
         ) in listing
 
 
-class TestExperimentConfiguration:
+class TestLanguageModelConfiguration:
     def test_loads_from_json_file(self, tmp_path):
-        from resym.llm.configuration import ExperimentConfiguration
+        from resym.llm.configuration import LanguageModelConfiguration
 
         path = tmp_path / "llm.json"
         path.write_text(
@@ -505,7 +505,7 @@ class TestExperimentConfiguration:
                 }
             )
         )
-        configuration = ExperimentConfiguration.load(path)
+        configuration = LanguageModelConfiguration.load(path)
         assert configuration.agent["model"] == "test-model"
         assert configuration.tasks == {"call_max_retries": 4}
         assert configuration.structured_maximum_attempts == 5
@@ -527,12 +527,12 @@ class TestRealAdapter:
 
         os.environ.setdefault("API_KEY", "test-key-never-used")
         from resym.llm.configuration import (
-            ExperimentConfiguration,
+            LanguageModelConfiguration,
             build_completion_client,
         )
 
         client = build_completion_client(
-            ExperimentConfiguration(
+            LanguageModelConfiguration(
                 agent={"model": "test-model"}, tasks={"call_max_retries": 3}
             )
         )

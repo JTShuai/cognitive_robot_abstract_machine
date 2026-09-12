@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
-from resym.core.grounding import (
+from resym.core.grounding_model import (
     GroundingFactoryCandidate,
     GroundingFactoryOrigin,
     GroundingFactoryReviewStatus,
@@ -20,18 +20,14 @@ from resym.core.grounding import (
     PredicateGroundingPlan,
     text_checksum,
 )
-from resym.core.model import (
-    PredicateSymbol,
-    SymbolLibrary,
-    SymbolType,
-)
+from resym.core.symbols import PredicateSymbol, SymbolLibrary
+from resym.core.symbol_types import SymbolType
 from resym.llm.schemas import PredicateProposal
-from resym.planning.grounding import evaluate_predicate
-from resym.platform.capabilities import (
+from resym.planning.state_evaluation import evaluate_predicate
+from .dataset.capability_model import (
     ARTICULATED_PART_TYPE,
     ARTICULATION_CAPABILITY_UID,
 )
-from resym.platform.embodiment import EmbodimentProfile
 from resym.platform.feasibility import feasibility_factory_uid
 from resym.platform.grounding_context import EvaluationContext
 from resym.platform.grounding_catalog import (
@@ -44,14 +40,14 @@ from resym.platform.grounding_catalog import (
     GroundingVocabularyEntry,
     GroundingVocabularyKind,
     discover_grounding_vocabulary,
-    freeze_grounding_factories,
+    freeze_grounding_factory_release,
     initialize_grounding_factories,
 )
 from resym.platform.universe import GroundedObject, ObjectUniverse
 from resym.repair.curator import Curator
 from resym.repair.patch import ModelPatch
 
-from experiments.resym.grounding_initialization import JOINT_FRACTION_OPENED_UID
+from .dataset.task_model import JOINT_FRACTION_OPENED_UID
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Drawer
@@ -345,7 +341,6 @@ def test_predicate_plan_resolves_factory_and_applies_negation(tmp_path) -> None:
     context = EvaluationContext(
         world=None,
         robot=None,
-        profile=EmbodimentProfile("stub", frozenset(), frozenset()),
         grounding_catalog=catalog,
     )
 
@@ -405,7 +400,6 @@ def test_reviewed_local_factory_evaluates_the_drawer_joint_fraction(
     context = EvaluationContext(
         world=None,
         robot=None,
-        profile=EmbodimentProfile("stub", frozenset(), frozenset()),
         grounding_catalog=catalog,
     )
 
@@ -523,9 +517,10 @@ def test_reviewed_dependency_drift_disables_the_local_factory(
     catalog = GroundingFactoryCatalog.load(workspace=workspace)
 
     assert specification.uid in catalog.unavailable
-    assert "dependency 'reviewed_helper.relation' changed" in catalog.unavailable[
-        specification.uid
-    ]
+    assert (
+        "dependency 'reviewed_helper.relation' changed"
+        in catalog.unavailable[specification.uid]
+    )
 
 
 def test_curator_checks_factory_identity_checksum_and_role_types(tmp_path) -> None:
@@ -686,14 +681,14 @@ def test_formal_snapshot_includes_unpublished_local_source_and_catalog(
     symbol_library = tmp_path / "library.json"
     symbol_library.write_text("{}")
 
-    snapshot = freeze_grounding_factories(
+    snapshot = freeze_grounding_factory_release(
         workspace=workspace,
         output_directory=tmp_path / "snapshot",
         symbol_library=symbol_library,
         git_commits=(("cram", "abc123"),),
         package_versions=(("krrood", "26.07.0"),),
         container_image_digest="sha256:image",
-        experiment_configuration=(("experiment", "E1"),),
+        release_metadata=(("purpose", "test"),),
     )
 
     manifest = json.loads(snapshot.manifest.read_text())

@@ -1,5 +1,5 @@
 """
-Experiment configuration for the language-model layer.
+Configuration for the language-model layer.
 """
 
 from __future__ import annotations
@@ -14,9 +14,9 @@ from resym.llm.client import CompletionClient
 
 
 @dataclass(frozen=True)
-class ExperimentConfiguration:
+class LanguageModelConfiguration:
     """
-    All tunable knobs of one language-model experiment.
+    Tunable settings for language-model calls.
     """
 
     agent: dict[str, Any] = field(default_factory=dict)
@@ -47,7 +47,7 @@ class ExperimentConfiguration:
 
 
 def build_completion_client(
-    configuration: ExperimentConfiguration,
+    configuration: LanguageModelConfiguration,
 ) -> CompletionClient:
     """
     The real client for a configuration.

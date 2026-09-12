@@ -3,17 +3,12 @@ CRAM type references and their task-scoped PDDL projection.
 """
 
 import pytest
+from krrood.utils import get_full_class_name
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.world_description.world_entity import Body
 
-from resym.core.model import (
-    Literal,
-    PredicateSymbol,
-    SymbolLibrary,
-    SymbolType,
-    is_symbol_subtype,
-    resolve_symbol_type,
-)
+from resym.core.symbols import Literal, PredicateSymbol, SymbolLibrary
+from resym.core.symbol_types import SymbolType, is_symbol_subtype, resolve_symbol_type
 from resym.planning.pddl import write_domain, write_problem
 from resym.planning.selection import Selection
 from resym.platform.universe import GroundedObject, ObjectUniverse
@@ -57,7 +52,7 @@ def test_cram_type_reference_roundtrip_uses_python_class():
 def test_symbol_type_accepts_any_cram_python_type_reference():
     body_type = SymbolType.from_python_type(Body)
 
-    assert body_type.python_type_ref.endswith(":Body")
+    assert body_type.python_type_ref == get_full_class_name(Body)
     assert resolve_symbol_type(body_type) is Body
 
 

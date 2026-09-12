@@ -1,18 +1,14 @@
-"""Repair backends behind one interface, under one budget meter.
+"""Repair strategies behind one interface and resource meter.
 
-E1's fairness requirement (revised plan §9.4) is *matched budgets*:
-every automatic backend runs with the same LLM and tool
-whitelist, the same corpus and top-k, and the same
-candidate/tool-call/probe/token budgets, metered by the same
-:class:`BudgetMeter` — not by each backend's own bookkeeping. A backend
+Every automatic backend uses the same resource accounting rather than private
+bookkeeping. A backend
 returns candidate patches and an episode log; it never touches the
 library. Admission is the trusted curator's, and only the curator's,
 decision.
 
-The main method is agentic RAG: a stateful agent decides when and how to
-retrieve UniDomain fragments, adapt them, inspect feedback, and retry.  The
-backends in this module are comparison conditions for separating retrieval
-from agentic control:
+The main method is agentic RAG: a stateful agent decides when and how to retrieve
+UniDomain fragments, adapt them, inspect feedback, and retry. Other reusable repair
+strategies expose the same interface:
 
 - :class:`ClosedBookBackend` — one-shot proposal, no retrieval;
 - :class:`RagOneShotBackend` — non-agentic RAG with top-k rendered into
@@ -22,8 +18,7 @@ from agentic control:
   then propose → static-check → feed objections back → repropose, no
   state beyond the last objection list, no probe selection.
 
-The stateful agentic-RAG method and typed enumeration join this registry
-through the same interface and meter.
+The stateful agentic-RAG method and typed enumeration use the same interface and meter.
 """
 
 from __future__ import annotations
@@ -36,12 +31,24 @@ from itertools import combinations
 from typing_extensions import TYPE_CHECKING, Callable, Optional, Sequence
 
 from resym.repair.patch import ModelPatch
-from resym.knowledge.retrieval import (
+from resym.retrieval.index import (
     FragmentIndex,
     RankedFragment,
     RetrievalQuery,
 )
-from resym.core.provenance import KnowledgeSource
+from resym.core.capability_model import (
+    CapabilityContract,
+    CapabilityRole,
+    OperatorExecutionBinding,
+    RoleBinding,
+)
+from resym.core.grounding_model import GroundingFactoryCandidate
+from resym.platform.capability_contract_review import CapabilityContractCandidate
+from resym.platform.coraplex_realizations import RealizationCandidate
+from resym.core.predicate_refs import PredicateRef
+from resym.core.provenance import KnowledgeSource, Provenance
+from resym.core.symbols import Literal, Operator, SymbolLibrary
+from resym.core.symbol_types import SymbolType, is_symbol_subtype, resolve_symbol_type
 from resym.llm.client import CompletionUsage, UsageSource
 from resym.llm.prompting import (
     render_operators,
@@ -53,27 +60,12 @@ from resym.llm.structured import (
     StructuredCompleter,
     StructuredOutputRetriesExceededError,
 )
-from resym.core.model import (
-    CapabilityContract,
-    CapabilityRole,
-    Literal,
-    Operator,
-    OperatorExecutionBinding,
-    PredicateRef,
-    Provenance,
-    RoleBinding,
-    SymbolLibrary,
-    SymbolType,
-    is_symbol_subtype,
-    resolve_symbol_type,
-)
-from resym.core.grounding import GroundingFactoryCandidate
 
 if TYPE_CHECKING:
     from resym.repair.certificate import FailureCertificate
 
 AGENTIC_RAG_BACKEND_NAME = "agentic-rag"
-"""Canonical experiment name for the retrieval-augmented stateful agent."""
+"""Stable identifier for the retrieval-augmented stateful agent."""
 
 
 class RetrievalStatus(StrEnum):
@@ -244,6 +236,24 @@ class RepairTask:
     )
     """Pending-review persistence supplied by the application."""
 
+    validate_realization_candidate: Optional[
+        Callable[[RealizationCandidate], tuple[str, ...]]
+    ] = None
+    """Static checks applied before a realization candidate enters review."""
+
+    realization_candidate_sink: Optional[Callable[[RealizationCandidate], None]] = None
+    """Pending-review persistence for realization candidates."""
+
+    validate_contract_candidate: Optional[
+        Callable[[CapabilityContractCandidate], tuple[str, ...]]
+    ] = None
+    """Static checks applied before a contract candidate enters review."""
+
+    contract_candidate_sink: Optional[Callable[[CapabilityContractCandidate], None]] = (
+        None
+    )
+    """Pending-review persistence for contract candidates."""
+
 
 class OutcomeStatus(Enum):
     PATCH_PROPOSED = "patch_proposed"
@@ -270,6 +280,11 @@ class MissingExecutionCapability:
     reason: str
     gap_kind: CapabilityGapKind = CapabilityGapKind.MISSING_CONTRACT
     matching_contract_uids: tuple[str, ...] = ()
+    submitted_candidate_ids: tuple[str, ...] = ()
+    """Realization candidates the report placed in the review queue."""
+
+    submitted_contract_candidate_ids: tuple[str, ...] = ()
+    """Contract candidates the report placed in the review queue."""
 
 
 @dataclass(frozen=True)

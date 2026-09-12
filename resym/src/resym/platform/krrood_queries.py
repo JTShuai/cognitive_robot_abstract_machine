@@ -12,7 +12,7 @@ from semantic_digital_twin.world_description.geometry import Color
 from semantic_digital_twin.world_description.world_entity import Body
 from typing_extensions import Iterable, Mapping
 
-from resym.core.model import SymbolType, resolve_symbol_type
+from resym.core.symbol_types import SymbolType, resolve_symbol_type
 from resym.platform.universe import GroundedObject, ObjectUniverse
 
 

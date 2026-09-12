@@ -6,14 +6,10 @@ from __future__ import annotations
 
 import pytest
 
-from resym.core.grounding import PredicateGroundingPlan
-from resym.core.model import (
-    DuplicateSymbolError,
-    PredicateSymbol,
-    SymbolLibrary,
-)
+from resym.core.grounding_model import PredicateGroundingPlan
+from resym.core.symbols import DuplicateSymbolError, PredicateSymbol, SymbolLibrary
+from resym.core.symbol_types import SymbolType
 
-from resym.core.model import SymbolType
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Drawer
 
 DRAWER_TYPE = SymbolType.from_python_type(Drawer)

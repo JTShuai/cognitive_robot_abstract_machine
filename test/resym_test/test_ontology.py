@@ -9,12 +9,12 @@ import json
 import pytest
 from krrood.adapters.json_serializer import from_json, to_json
 
-from resym.platform.capabilities import (
+from .dataset.capability_model import (
     articulation_capability_contract,
     capability_contracts,
-    navigation_capability_contract,
+    interaction_navigation_capability_contract,
 )
-from resym.knowledge.ontology import (
+from resym.retrieval.ontology import (
     CorruptOntologyError,
     InvalidOntologyAlignmentError,
     OntologyEntityKind,
@@ -23,7 +23,7 @@ from resym.knowledge.ontology import (
     OntologyNotInstalledError,
     UnknownOntologyIriError,
 )
-from resym.knowledge.ontology_alignment import (
+from resym.retrieval.ontology_alignment import (
     apply_human_alignment_review,
     align_capability_contract,
 )
@@ -31,7 +31,7 @@ from resym.llm.client import ScriptedCompletionClient
 from resym.llm.schemas import OntologyAlignmentProposal
 from resym.llm.structured import StructuredCompleter
 from resym.llm.transcript import TranscriptRecorder
-from resym.knowledge.ontology_installation import ONTOLOGY_DIRECTORY
+from resym.retrieval.ontology_installation import ONTOLOGY_DIRECTORY
 
 ONTOLOGY_ROOT = ONTOLOGY_DIRECTORY
 OPENING = "http://www.ease-crc.org/ont/SOMA.owl#Opening"
@@ -106,7 +106,7 @@ def test_contract_query_surfaces_state_transition(index):
     ("contract", "target_iri"),
     [
         (articulation_capability_contract(), STATE_TRANSITION),
-        (navigation_capability_contract(), NAVIGATING),
+        (interaction_navigation_capability_contract(), NAVIGATING),
     ],
 )
 def test_bundled_contract_ontology_alignments_are_frozen_and_valid(
@@ -124,7 +124,6 @@ def test_bundled_contract_ontology_alignments_are_frozen_and_valid(
 
 
 def test_complete_capability_catalog_only_cites_frozen_ontology_classes(index):
-    assert len(capability_contracts()) == 20
     for contract in capability_contracts():
         alignment = contract.ontology_alignment
         index.require(alignment.target_iri, frozenset({OntologyEntityKind.CLASS}))

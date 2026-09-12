@@ -9,13 +9,13 @@ import tarfile
 
 import pytest
 
-from resym.knowledge.corpus_installation import (
+from resym.retrieval.corpus_installation import (
     CorpusInstaller,
     CorpusReleaseChecksumError,
     DownloadedCorpusArchiveHashError,
     RAW_CORPUS_MANIFEST_NAME,
 )
-from resym.knowledge.freeze import build_release, sha256_of_file
+from resym.retrieval.freeze import build_release, sha256_of_file
 
 
 def _write_atomic_domain(

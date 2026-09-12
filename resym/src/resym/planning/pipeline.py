@@ -17,10 +17,12 @@ from pathlib import Path
 
 from typing_extensions import Optional
 
-from resym.core.grounding import GroundingFailure
-from resym.platform.embodiment import (
-    InvalidGroundingFactoryBindingError,
-    UnsupportedCapabilityError,
+from resym.core.grounding_model import GroundingFailure
+from resym.core.symbols import Literal, SymbolLibrary
+from resym.core.validation import InvalidSymbolLibraryError, selection_model_issues
+from resym.platform.feasibility import (
+    FEASIBILITY_FACTORY_NAMESPACE,
+    feasibility_factory_uid,
 )
 from resym.platform.grounding_context import EvaluationContext
 from resym.planning.execution.engine import (
@@ -32,18 +34,13 @@ from resym.planning.execution.engine import (
     check_goal,
     execute,
 )
-from resym.planning.grounding import ground
+from resym.planning.state_evaluation import ground
 from resym.planning.events import (
     PipelineEvent,
     PipelineEventSink,
     action_payload,
     emit_event,
     literal_payload,
-)
-from resym.core.model import Literal, SymbolLibrary
-from resym.core.validation import (
-    InvalidSymbolLibraryError,
-    selection_model_issues,
 )
 from resym.planning.pddl import (
     GroundAction,
@@ -159,6 +156,31 @@ class RepeatedFailedPlanError(Exception):
         self.last_execution = last_execution
 
 
+class InvalidGroundingFactoryBindingError(Exception):
+    """A selected predicate references no factory available to the robot."""
+
+    def __init__(self, missing: tuple[str, ...], goal: tuple = (), selection=None):
+        super().__init__("Invalid grounding factory binding: " + "; ".join(missing))
+        self.missing = missing
+        self.goal = goal
+        self.selection = selection
+
+
+class UnsupportedCapabilityError(Exception):
+    """The selected operators require capabilities unavailable to the robot."""
+
+    def __init__(
+        self,
+        missing: tuple[str, ...],
+        goal: tuple = (),
+        selection=None,
+    ):
+        super().__init__("Unsupported capability: " + "; ".join(missing))
+        self.missing = missing
+        self.goal = goal
+        self.selection = selection
+
+
 def solve_task(
     library: SymbolLibrary,
     universe: ObjectUniverse,
@@ -170,6 +192,7 @@ def solve_task(
     verify_goal: bool = True,
     check_postconditions: bool = True,
     event_sink: Optional[PipelineEventSink] = None,
+    available_capabilities: frozenset[str] | None = None,
 ) -> TaskResult:
     """Solve one symbolic goal on the current world using the persistent
     library.
@@ -178,17 +201,23 @@ def solve_task(
     ablation baselines; full monitoring is the default.
 
     Before anything is grounded, the goal-relevant selection is checked
-    against the embodiment profile. A missing execution capability raises
-    :class:`UnsupportedCapabilityError`. A missing grounding-factory binding raises
-    :class:`InvalidGroundingFactoryBindingError`, allowing repair to distinguish a bad
-    symbol binding from a genuine platform limitation.
+    against the capabilities derived from the CRAM robot. A missing execution
+    capability raises :class:`UnsupportedCapabilityError`. A missing grounding-factory
+    binding raises :class:`InvalidGroundingFactoryBindingError`, allowing repair to
+    distinguish a bad symbol binding from a genuine platform limitation.
     """
     result = TaskResult()
+    robot_name = type(context.robot).__name__ if context.robot is not None else "none"
+    robot_type = (
+        f"{type(context.robot).__module__}:{type(context.robot).__qualname__}"
+        if context.robot is not None
+        else "none"
+    )
     emit_event(
         event_sink,
         PipelineEvent.TASK_STARTED,
         goal=[literal_payload(literal) for literal in goal],
-        embodiment=context.profile.name,
+        robot_type=robot_type,
     )
     selection = select_for_goal(library, goal)
     model_issues = selection_model_issues(library, selection)
@@ -199,10 +228,36 @@ def solve_task(
             issues=[issue.render() for issue in model_issues],
         )
         raise InvalidSymbolLibraryError(model_issues, selection)
-    missing_grounding_factories = context.profile.missing_grounding_factories(
-        selection, context.grounding_catalog
+    if available_capabilities is not None:
+        capabilities = available_capabilities
+    elif realization is not None:
+        capabilities = realization.available_capabilities(context.robot)
+    else:
+        raise ValueError(
+            "capability availability needs a platform realization or an explicit set"
+        )
+    supported_feasibility_factories = {
+        feasibility_factory_uid(capability_uid) for capability_uid in capabilities
+    }
+    missing_grounding_factories = tuple(
+        f"predicate '{predicate.name}' needs grounding factory "
+        f"'{predicate.grounding_plan.factory_uid}', which robot '{robot_name}' "
+        "does not implement"
+        for predicate in selection.predicates.values()
+        if not _grounding_factory_supported(
+            predicate.grounding_plan.factory_uid,
+            robot_type,
+            context,
+            supported_feasibility_factories,
+        )
     )
-    missing_capabilities = context.profile.missing_capabilities(selection)
+    missing_capabilities = tuple(
+        f"operator '{operator.name}' needs capability '{capability_uid}', "
+        f"which robot '{robot_name}' does not provide"
+        for operator in selection.operators.values()
+        if (capability_uid := operator.execution_binding.capability_ref.uid)
+        not in capabilities
+    )
     if missing_capabilities:
         missing = missing_grounding_factories + missing_capabilities
         emit_event(
@@ -393,3 +448,18 @@ def solve_task(
     raise ReplanningLimitExceededError(
         result.replanning_rounds, result.execution, tuple(result.nogoods)
     )
+
+
+def _grounding_factory_supported(
+    factory_uid: str,
+    robot_type: str,
+    context: EvaluationContext,
+    supported_feasibility_factories: set[str],
+) -> bool:
+    """
+    A feasibility factory is supported exactly when its capability is available on
+    the robot; any other factory answers for itself.
+    """
+    if factory_uid.startswith(FEASIBILITY_FACTORY_NAMESPACE):
+        return factory_uid in supported_feasibility_factories
+    return context.grounding_catalog.supports(factory_uid, robot_type)

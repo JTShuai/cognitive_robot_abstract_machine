@@ -2,7 +2,7 @@
 True iff the interaction point is the one mounted on the articulated object.
 """
 
-from resym.platform.articulation import interaction_point_belongs_to
+from experiments.resym.articulation import interaction_point_belongs_to
 
 
 def evaluate(context, universe, arguments, parameters):

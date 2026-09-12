@@ -2,74 +2,34 @@
 Coraplex capability discovery without loading the ROS runtime.
 """
 
+from resym.core.symbol_types import SymbolType
+from resym.platform.coraplex_realizations import ContextValue, ParameterSourceKind
+from semantic_digital_twin.robots.robot_parts import (
+    Arm,
+    Camera,
+    EndEffector,
+    MobileBase,
+    Torso,
+)
 from resym.platform.coraplex_catalog import (
     CapabilityRealizationStatus,
-    RobotResource,
+    available_coraplex_capabilities,
     coraplex_capability_catalog,
-    coraplex_capability_realization_evidence,
-    coraplex_embodiment_profile,
     discover_coraplex_capability_contract_drafts,
     infer_coraplex_capability_support,
+    initialize_coraplex_capabilities,
+    realization_evidence,
     robot_resources,
 )
-from resym.platform.capabilities import (
+from resym.platform.coraplex_realizations import CoraplexRealizationWorkspace
+
+from .dataset.capability_model import (
     ARTICULATION_CAPABILITY_UID,
     BASE_NAVIGATION_CAPABILITY_UID,
-    NAVIGATION_CAPABILITY_UID,
+    INTERACTION_NAVIGATION_CAPABILITY_UID,
     capability_contracts,
 )
-from resym.platform.embodiment import ToolOrientation
-from semantic_digital_twin.datastructures.field_of_view import FieldOfView
-from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
-from semantic_digital_twin.robots.robot_parts import Camera
-from semantic_digital_twin.spatial_types.spatial_types import Vector3
-from semantic_digital_twin.world_description.world_entity import Body
-
-
-class ForwardCamera(Camera):
-    """
-    A constructible camera sensor for exercising resource discovery.
-    """
-
-    @classmethod
-    def setup_default_configuration_in_world_below_robot_root(cls, robot_root):
-        raise NotImplementedError
-
-    def setup_hardware_interfaces(self):
-        raise NotImplementedError
-
-    def setup_joint_states(self):
-        raise NotImplementedError
-
-
-def forward_camera() -> ForwardCamera:
-    return ForwardCamera(
-        root=Body(name=PrefixedName("camera")),
-        forward_facing_axis=Vector3.from_iterable((1.0, 0.0, 0.0)),
-        field_of_view=FieldOfView(),
-    )
-
-
-class Robot:
-    """
-    Mimics the resource-bearing surface of ``AbstractRobot``.
-    """
-
-    def __init__(self, *, mobile: bool):
-        self.drive = object() if mobile else None
-        self.torso = object()
-
-    def get_arms(self):
-        return [object()]
-
-    def get_end_effectors(self):
-        return [object()]
-
-    def get_sensors(self):
-        return [forward_camera()]
-
-    def get_torso_if_specified(self):
-        return self.torso
+from .dataset.resource_bearing_robot import Robot
 
 
 def test_discovers_public_coraplex_actions_as_contract_drafts():
@@ -112,36 +72,40 @@ def test_field_without_default_is_still_a_required_parameter():
     assert object_parameter.required
 
 
-def test_every_discovered_action_has_reviewed_capability_and_resource_evidence():
+def test_every_admitted_realization_carries_capability_and_resource_evidence(
+    capability_initialization,
+):
     draft_ids = {
         draft.source_id for draft in discover_coraplex_capability_contract_drafts()
     }
-    evidence = coraplex_capability_realization_evidence()
+    evidence = realization_evidence(capability_initialization)
 
-    assert {item.action_source_id for item in evidence} == draft_ids
-    assert {item.capability_uid for item in evidence}.issubset(
-        {contract.uid for contract in capability_contracts()}
-    )
+    assert evidence
+    assert {item.action_source_id for item in evidence} <= draft_ids
+    assert {item.capability_uid for item in evidence} <= {
+        contract.uid for contract in capability_contracts()
+    }
+    assert all(item.required_resources for item in evidence)
 
 
 def test_robot_resources_come_from_the_semantic_robot_structure():
     resources = robot_resources(Robot(mobile=True))
 
-    assert resources == frozenset(
-        {
-            RobotResource.MOBILE_BASE,
-            RobotResource.ARM,
-            RobotResource.END_EFFECTOR,
-            RobotResource.CAMERA,
-            RobotResource.TORSO,
-        }
+    assert {
+        SymbolType.from_python_type(part)
+        for part in (MobileBase, Arm, EndEffector, Camera, Torso)
+    } <= resources
+    assert all(
+        item.python_type_ref.startswith("semantic_digital_twin.") for item in resources
     )
 
 
-def test_fixed_robot_does_not_claim_mobile_capabilities():
+def test_fixed_robot_does_not_claim_mobile_capabilities(capability_initialization):
     support = {
         item.capability_uid: item
-        for item in infer_coraplex_capability_support(Robot(mobile=False))
+        for item in infer_coraplex_capability_support(
+            Robot(mobile=False), capability_initialization
+        )
     }
 
     assert (
@@ -149,34 +113,55 @@ def test_fixed_robot_does_not_claim_mobile_capabilities():
         is CapabilityRealizationStatus.ROBOT_INCOMPATIBLE
     )
     assert (
-        support[NAVIGATION_CAPABILITY_UID].status
+        support[INTERACTION_NAVIGATION_CAPABILITY_UID].status
         is CapabilityRealizationStatus.ROBOT_INCOMPATIBLE
     )
-    assert ARTICULATION_CAPABILITY_UID in support
-
-
-def test_profile_admits_only_ready_capabilities_and_keeps_their_sources():
-    profile = coraplex_embodiment_profile(
-        name="test-robot",
-        robot=Robot(mobile=True),
-        ready_capability_uids={ARTICULATION_CAPABILITY_UID},
-        tool_orientation=ToolOrientation.BASE_ALIGNED,
+    assert (
+        support[ARTICULATION_CAPABILITY_UID].status is CapabilityRealizationStatus.READY
     )
 
-    assert profile.capabilities == frozenset({ARTICULATION_CAPABILITY_UID})
-    assert BASE_NAVIGATION_CAPABILITY_UID not in profile.capabilities
-    assert dict(profile.capability_sources)[ARTICULATION_CAPABILITY_UID]
+
+def test_available_capabilities_are_derived_directly_from_the_robot(
+    capability_initialization,
+):
+    capabilities = available_coraplex_capabilities(
+        Robot(mobile=False), capability_initialization
+    )
+
+    assert ARTICULATION_CAPABILITY_UID in capabilities
+    assert BASE_NAVIGATION_CAPABILITY_UID not in capabilities
+    assert INTERACTION_NAVIGATION_CAPABILITY_UID not in capabilities
 
 
-def test_catalog_exposes_all_contracts_actions_and_readiness():
-    catalog = coraplex_capability_catalog()
+def test_nothing_is_available_before_any_realization_is_admitted(tmp_path):
+    unreviewed = initialize_coraplex_capabilities(
+        capability_contracts(), CoraplexRealizationWorkspace(tmp_path / "workspace")
+    )
+
+    assert (
+        available_coraplex_capabilities(Robot(mobile=True), unreviewed) == frozenset()
+    )
+
+
+def test_catalog_exposes_all_contracts_actions_and_readiness(
+    capability_initialization,
+):
+    catalog = coraplex_capability_catalog(capability_initialization)
+    contracts = len(capability_contracts())
 
     assert catalog["summary"] == {
-        "contracts": 20,
+        "contracts": contracts,
         "actions": len(discover_coraplex_capability_contract_drafts()),
-        "ready": 20,
-        "built_in_verification": 2,
-        "pending_review": 0,
+        "ready": contracts,
+        "task_verification_required": contracts,
+        "pending_review": len(discover_coraplex_capability_contract_drafts())
+        - len(
+            {
+                record.draft.source_id
+                for record in capability_initialization.records
+                if record.contract is not None
+            }
+        ),
     }
     entries = {entry["contract"]["uid"]: entry for entry in catalog["contracts"]}
     assert entries[ARTICULATION_CAPABILITY_UID]["realization"]["status"] == "ready"
@@ -186,3 +171,23 @@ def test_catalog_exposes_all_contracts_actions_and_readiness():
         == "task-required"
     )
     assert entries[BASE_NAVIGATION_CAPABILITY_UID]["realization"]["actions"]
+
+
+def test_reviewed_realizations_reference_only_declared_roles_and_context_values(
+    capability_initialization,
+):
+    """
+    A parameter source names a role the contract declares, a value the context can
+    supply, or a constant; nothing else can be filled at runtime.
+    """
+    for record in capability_initialization.records:
+        if not record.parameter_sources:
+            continue
+        declared_roles = {role.name for role in record.contract.roles}
+        for source in record.parameter_sources:
+            if source.kind is ParameterSourceKind.ROLE:
+                assert source.value in declared_roles, (record.draft.source_id, source)
+            elif source.kind is ParameterSourceKind.CONTEXT:
+                assert ContextValue(source.value), (record.draft.source_id, source)
+        if record.applies_when is not None:
+            assert record.applies_when.role in declared_roles, record.draft.source_id

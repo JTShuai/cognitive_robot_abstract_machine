@@ -23,21 +23,18 @@ from resym.repair.backends import (
     RetrievalStatus,
 )
 from resym.core.provenance import KnowledgeSource
-from resym.knowledge.corpus import load_fragment
-from resym.knowledge.retrieval import FragmentIndex
+from resym.core.symbols import PredicateSymbol, SymbolLibrary
+from resym.core.symbol_types import SymbolType
+from resym.retrieval.corpus import load_fragment
+from resym.retrieval.index import FragmentIndex
 from resym.llm.client import ScriptedCompletionClient
 from resym.llm.structured import StructuredCompleter
 from resym.llm.transcript import TranscriptRecorder
-from resym.core.model import (
-    PredicateSymbol,
-    SymbolLibrary,
-)
 from .capability_helpers import capability_contract
-from experiments.resym.seed_library import build_fixed_arm_library
+from .dataset.task_model import build_fixed_arm_library
 from .grounding_helpers import STUB_GROUNDING_PLAN
 from .test_grounding_factory_catalog import DATASET, vocabulary
 
-from resym.core.model import SymbolType
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     Drawer,
@@ -286,7 +283,7 @@ def test_objections_are_observations_and_revision_is_local(corpus_index):
 
 def test_declare_unsupported_terminates():
     agent, _ = agent_with(
-        action("inspect_embodiment_profile"),
+        action("inspect_robot_platform"),
         action("declare_unsupported", reason="no pull skill on this arm"),
     )
     outcome = agent.repair(task_with(), BudgetMeter())
@@ -409,10 +406,7 @@ def test_agent_reports_a_structured_grounding_gap_when_eql_is_insufficient():
 
 
 def test_agent_can_search_the_complete_reviewed_capability_catalog():
-    from resym.platform.capabilities import (
-        PLACE_CAPABILITY_UID,
-        capability_contracts,
-    )
+    from .dataset.capability_model import PLACE_CAPABILITY_UID, capability_contracts
 
     task = task_with()
     task.capability_catalog = capability_contracts()
@@ -757,3 +751,101 @@ def test_full_probe_result_is_logged_but_model_observation_is_bounded():
     assert probe_result["result"]["observation"]["payload"].endswith("END")
     assert len(probe_result["observation"]) == 1200
     assert "END" not in client.received_prompts[-1]
+
+
+def test_gap_report_with_parameter_sources_queues_a_realization_candidate():
+    """
+    When a reviewed contract already covers the effects, a gap report that binds the
+    cited action's parameters becomes a realization candidate for human review.
+    """
+    from resym.platform.coraplex_realizations import (
+        ParameterSourceKind,
+        RealizationCandidate,
+    )
+
+    source_id = "coraplex:robot_plans.actions.core.container.open-action"
+    submitted: list[RealizationCandidate] = []
+    task = task_with()
+    task.capability_draft_listing = f"- {source_id}: OpenAction; draft only"
+    task.capability_draft_ids = frozenset({source_id})
+    task.realization_candidate_sink = submitted.append
+    agent, _ = agent_with(
+        action(
+            "report_missing_execution_capability",
+            suggested_label="drawer.open",
+            desired_effects=["opened"],
+            required_roles={},
+            candidate_realizations=[source_id],
+            reason="the contract exists but this robot has no admitted realization",
+            proposed_parameter_sources=[
+                {
+                    "parameter": "object_designator",
+                    "kind": "role",
+                    "value": "interaction_point",
+                },
+                {"parameter": "arm", "kind": "context", "value": "manipulation_arm"},
+            ],
+        )
+    )
+
+    outcome = agent.repair(task, BudgetMeter())
+
+    assert outcome.status is OutcomeStatus.MISSING_EXECUTION_CAPABILITY
+    gap = outcome.missing_execution_capability
+    assert gap.gap_kind is CapabilityGapKind.MISSING_REALIZATION
+    assert gap.submitted_candidate_ids == ("drawer.open--open-action",)
+    (candidate,) = submitted
+    assert candidate.action_source_id == source_id
+    assert candidate.realization.capability_uid == CAPABILITY_UID
+    assert [source.kind for source in candidate.realization.parameter_sources] == [
+        ParameterSourceKind.ROLE,
+        ParameterSourceKind.CONTEXT,
+    ]
+    assert candidate.rationale == (
+        "the contract exists but this robot has no admitted realization"
+    )
+
+
+def test_gap_report_without_a_matching_contract_queues_a_contract_candidate():
+    """
+    When no admitted contract covers the effects, the gap report becomes a contract
+    candidate for human review, carrying the proposed roles and effects.
+    """
+    from resym.platform.capability_contract_review import CapabilityContractCandidate
+
+    source_id = "coraplex:robot_plans.actions.core.placing.place-action"
+    submitted: list[CapabilityContractCandidate] = []
+    task = task_with()
+    task.capability_draft_listing = f"- {source_id}: PlaceAction; draft only"
+    task.capability_draft_ids = frozenset({source_id})
+    task.contract_candidate_sink = submitted.append
+    agent, _ = agent_with(
+        action(
+            "report_missing_execution_capability",
+            suggested_label="placement.put-into-container",
+            desired_effects=["inside"],
+            required_roles={
+                "item": HANDLE_TYPE.python_type_ref,
+                "container": DRAWER_TYPE.python_type_ref,
+            },
+            candidate_realizations=[source_id],
+            reason="PlaceAction exists, but no reviewed placement contract is published",
+        )
+    )
+
+    outcome = agent.repair(task, BudgetMeter())
+
+    gap = outcome.missing_execution_capability
+    assert gap.gap_kind is CapabilityGapKind.MISSING_CONTRACT
+    assert gap.submitted_contract_candidate_ids == (
+        "placement.put-into-container--contract",
+    )
+    (candidate,) = submitted
+    contract = candidate.contract
+    assert contract.uid == "resym:PutIntoContainer"
+    assert contract.label == "placement.put-into-container"
+    assert [role.name for role in contract.roles] == ["actor", "item", "container"]
+    assert contract.roles[1].accepted_symbol_types == (HANDLE_TYPE,)
+    assert contract.verifiable_effect_names == ("inside",)
+    assert contract.success_relation == "put_into_container(actor, item, container)"
+    assert candidate.action_source_ids == (source_id,)

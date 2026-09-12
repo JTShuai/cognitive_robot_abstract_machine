@@ -15,12 +15,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from resym.core.model import (
-    Literal,
-    Operator,
-    SymbolType,
-    is_symbol_subtype,
-)
+from resym.core.symbols import Literal, Operator
+from resym.core.symbol_types import SymbolType, is_symbol_subtype
 from resym import PROJECT_ROOT
 from resym.planning.selection import Selection
 from resym.platform.universe import ObjectUniverse

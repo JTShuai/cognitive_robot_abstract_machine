@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from resym.core.grounding import (
+from resym.core.grounding_model import (
     GroundingFactoryOrigin,
     GroundingFactoryRole,
     GroundingFactorySpec,
@@ -14,10 +14,11 @@ from resym.core.grounding import (
     GroundingFailureCode,
     PredicateGroundingPlan,
 )
-from resym.core.model import Literal, PredicateSymbol, SymbolType, TruthProcedureRef
-from resym.planning.grounding import ground
+from resym.core.predicate_refs import TruthProcedureRef
+from resym.core.symbols import Literal, PredicateSymbol
+from resym.core.symbol_types import SymbolType
+from resym.planning.state_evaluation import ground
 from resym.planning.selection import Selection
-from resym.platform.embodiment import EmbodimentProfile
 from resym.platform.grounding_catalog import GroundingFactoryCatalog
 from resym.platform.grounding_context import EvaluationContext
 from resym.platform.universe import GroundedObject, ObjectUniverse
@@ -71,10 +72,7 @@ def catalog_with(**procedures) -> GroundingFactoryCatalog:
 
 
 def context_over(catalog: GroundingFactoryCatalog) -> EvaluationContext:
-    profile = EmbodimentProfile(name="stub", capabilities=frozenset())
-    return EvaluationContext(
-        world=None, robot=None, profile=profile, grounding_catalog=catalog
-    )
+    return EvaluationContext(world=None, robot=None, grounding_catalog=catalog)
 
 
 def predicate(name: str, factory: str) -> PredicateSymbol:

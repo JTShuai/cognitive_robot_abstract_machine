@@ -15,17 +15,17 @@ from krrood.adapters.json_serializer import (
 )
 from typing_extensions import Any, Self
 
-from resym.core.capabilities import (
+from resym.core.capability_model import (
     CapabilityContract,
     OperatorExecutionBinding,
 )
-from resym.core.grounding import PredicateGroundingPlan
+from resym.core.grounding_model import PredicateGroundingPlan
 from resym.core.predicate_refs import (
     PredicateRef,
     TruthProcedureRef,
 )
 from resym.core.provenance import Provenance
-from resym.core.types import SymbolType
+from resym.core.symbol_types import SymbolType
 
 
 @dataclass(frozen=True)
@@ -82,6 +82,7 @@ class PredicateSymbol:
     @property
     def ref(self) -> PredicateRef:
         return PredicateRef(self.uid, self.version, self.name)
+
 
 @dataclass(frozen=True)
 class Operator:

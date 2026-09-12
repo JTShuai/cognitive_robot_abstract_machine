@@ -7,10 +7,9 @@ Both are inputs the paper assumes, not contributions. The annotation itself is C
 :class:`WorldReasoner` classifies drawers, handles, doors and wardrobes from the
 kinematic structure with its persisted ripple-down rules.
 
-Two embodiments are assembled here: the mobile PR2 (P3 material) and the fixed-arm Tracy
-(the IAI TraceBot dual-UR10e table setup with Robotiq grippers) the P2 experiments run
-on. Each scene setup carries the :class:`EmbodimentProfile` its capability checks and
-truth procedures dispatch on.
+Two robots are assembled here: the mobile PR2 (P3 material) and the fixed-arm Tracy (the
+IAI TraceBot dual-UR10e table setup with Robotiq grippers) the P2 experiments run on.
+Capability support is derived directly from each CRAM robot annotation.
 """
 
 from __future__ import annotations
@@ -24,8 +23,6 @@ from pathlib import Path
 
 import numpy as np
 from typing_extensions import TYPE_CHECKING, Optional
-
-from resym.platform.embodiment import EmbodimentProfile, ToolOrientation
 
 if TYPE_CHECKING:
     from semantic_digital_twin.robots.robot_parts import AbstractRobot
@@ -95,11 +92,6 @@ class SceneSetup:
     The robot semantic annotation.
     """
 
-    profile: EmbodimentProfile
-    """
-    The declared capability surface of this embodiment.
-    """
-
     scene: Scene
     """
     Which household this is.
@@ -112,42 +104,6 @@ class SceneSetup:
         ``None`` on the fixed arm.
         """
         return self.robot.drive
-
-
-def mobile_profile(robot: AbstractRobot) -> EmbodimentProfile:
-    """
-    Derive the PR2 capability surface from its CRAM robot annotation.
-    """
-    from resym.platform.coraplex_catalog import (
-        CORAPLEX_ADAPTER_CAPABILITY_UIDS,
-        coraplex_embodiment_profile,
-    )
-
-    return coraplex_embodiment_profile(
-        name="pr2-mobile",
-        robot=robot,
-        adapter_capability_uids=CORAPLEX_ADAPTER_CAPABILITY_UIDS,
-        tool_orientation=ToolOrientation.BASE_ALIGNED,
-    )
-
-
-def fixed_arm_profile(robot: AbstractRobot) -> EmbodimentProfile:
-    """
-    The Tracy embodiment: no drive, so no witness-pose sampling (``openable``) and no
-    navigation skill — asking for either is an unsupported capability, not a library
-    gap.
-    """
-    from resym.platform.coraplex_catalog import (
-        CORAPLEX_ADAPTER_CAPABILITY_UIDS,
-        coraplex_embodiment_profile,
-    )
-
-    return coraplex_embodiment_profile(
-        name="tracy-fixed",
-        robot=robot,
-        adapter_capability_uids=CORAPLEX_ADAPTER_CAPABILITY_UIDS,
-        tool_orientation=ToolOrientation.APPROACH_ALIGNED,
-    )
 
 
 def load_scene(scene: Scene) -> SceneSetup:
@@ -193,7 +149,6 @@ def load_scene(scene: Scene) -> SceneSetup:
     return SceneSetup(
         world=world,
         robot=robot,
-        profile=mobile_profile(robot),
         scene=scene,
     )
 
@@ -224,9 +179,8 @@ def load_fixed_arm_scene(scene: Scene = Scene.APARTMENT, variation=None) -> Scen
     ``FIXED_ARM_STANDOFF_FRONT`` meters along the furniture front (the
     drawer-to-handle direction) and ``FIXED_ARM_STANDOFF_SIDE`` meters
     beside the travel path — turned to face the handle. ``variation``
-    (a :class:`~experiments.resym.icra.articulation.faults.SceneVariation`) jitters the
-    two standoffs deterministically for the randomized experiment
-    scenes.
+    jitters the two standoffs deterministically, so a caller can derive a
+    family of scenes from one seed.
     """
     from semantic_digital_twin.adapters.urdf import URDFParser
     from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
@@ -248,9 +202,7 @@ def load_fixed_arm_scene(scene: Scene = Scene.APARTMENT, variation=None) -> Scen
 
     mount.origin = _fixed_arm_mount_pose(world, scene, variation)
     world.notify_state_change()
-    return SceneSetup(
-        world=world, robot=robot, profile=fixed_arm_profile(robot), scene=scene
-    )
+    return SceneSetup(world=world, robot=robot, scene=scene)
 
 
 def _fixed_arm_mount_pose(world: World, scene: Scene, variation=None):

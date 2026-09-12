@@ -6,22 +6,18 @@ from __future__ import annotations
 
 import pytest
 
-from resym.core.model import (
-    Literal,
-    Operator,
-)
-from resym.platform.capabilities import ARTICULATION_CAPABILITY_UID
+from resym.core.symbols import Literal, Operator
+from resym.core.symbol_types import SymbolType
+from .dataset.capability_model import ARTICULATION_CAPABILITY_UID
 from resym.planning.selection import (
     UnknownPredicateError,
     select_for_goal,
 )
 from .capability_helpers import execution_binding
 
-from resym.core.model import SymbolType
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Drawer
 
 DRAWER_TYPE = SymbolType.from_python_type(Drawer)
-
 
 
 def test_regression_reaches_full_closure(library):
@@ -31,7 +27,7 @@ def test_regression_reaches_full_closure(library):
         "opened",
         "closed",
         "handle-of",
-        "ready-to-open",
+        "ready-to-interact",
         "openable",
     }
 

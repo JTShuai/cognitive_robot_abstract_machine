@@ -1,3 +1,3 @@
 """
-Robot embodiment, world access, and platform bindings.
+CRAM robot access, world queries, and Coraplex platform bindings.
 """

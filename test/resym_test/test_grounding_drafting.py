@@ -10,12 +10,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from resym.core.grounding import (
+from resym.core.grounding_model import (
     GroundingFactoryReviewStatus,
     GroundingFactoryRole,
     GroundingFactorySourceKind,
 )
-from resym.core.model import SymbolType
+from resym.core.symbol_types import SymbolType
 from resym.interfaces.grounding_drafting import (
     GroundingFactoryRequest,
     draft_grounding_factory_candidates,
@@ -30,12 +30,7 @@ from resym.platform.grounding_catalog import (
 )
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
 
-from experiments.resym.grounding_initialization import (
-    GROUNDING_QUERY_HELPERS,
-    drawer_grounding_requests,
-    reference_candidate,
-)
-
+from .dataset.task_model import GROUNDING_QUERY_HELPERS, factory_candidates
 from .test_grounding_factory_catalog import DATASET, vocabulary
 
 ROBOT_TYPE = SymbolType.from_python_type(AbstractRobot)
@@ -129,22 +124,20 @@ def test_exhausted_attempts_report_a_failure_without_a_candidate(
     assert workspace.candidates() == ()
 
 
-def test_domain_reference_sources_satisfy_the_reviewed_sandbox(tmp_path: Path) -> None:
+def test_task_model_factory_sources_satisfy_the_reviewed_sandbox() -> None:
     """
-    Every relation the drawer domain requests has a reference implementation the source
-    validator accepts against the helpers that domain asks to review.
+    Every factory the task model submits passes the same sandbox a drafted candidate
+    must pass, against the helpers the task model asks to review.
     """
     validator = GroundingFactorySourceValidator(
         helper_vocabulary(GROUNDING_QUERY_HELPERS)
     )
-    requests = drawer_grounding_requests()
+    candidates = factory_candidates()
 
     objections = {
-        request.proposed_uid: validator.candidate_objections(
-            reference_candidate(request)
-        )
-        for request in requests
+        candidate.proposed_uid: validator.candidate_objections(candidate)
+        for candidate in candidates
     }
 
-    assert requests
-    assert objections == {request.proposed_uid: () for request in requests}
+    assert candidates
+    assert objections == {candidate.proposed_uid: () for candidate in candidates}

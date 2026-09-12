@@ -1,4 +1,3 @@
-from krrood.entity_query_language.factories import entity
 
 
 def evaluate(context, universe, arguments, parameters):

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from typing_extensions import Callable, Iterable
 
-from resym.core.model import SymbolType
+from resym.core.symbol_types import SymbolType
 from resym.platform.universe import (
     GroundedObject,
     ObjectUniverse,
@@ -73,7 +73,7 @@ class CramObjectCatalog:
     All object-like semantic annotations currently exposed by CRAM.
 
     Discovery is domain-independent.  A caller may select annotation types when
-    constructing the active task universe; no drawer-specific extraction rule is needed
+    constructing the active task universe; no task-specific extraction rule is needed
     for a new semantic-annotation class.
     """
 
@@ -86,7 +86,7 @@ class CramObjectCatalog:
         # resulting object identities instead of maintaining a second world model.
         robot_object = next(iter(RobotObjectExtractor().extract(world, robot)))
         # The world's own annotation list gives the world-restricted seed set; some
-        # annotations (a drawer's handle, for example) are reachable only through
+        # nested annotations are sometimes reachable only through
         # references from a seed annotation, so the closure is still walked.
         grounded: list[GroundedObject] = []
         seen_annotations: set[int] = set()

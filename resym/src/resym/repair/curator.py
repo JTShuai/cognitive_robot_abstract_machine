@@ -9,15 +9,14 @@ no language model participates in admission.
 
 Static review (revised plan §6.6): typing and variable binding, registry whitelists,
 fluent-only effects, no add∧delete of the same literal, effect–contract consistency,
-embodiment support, no unresolved requirements. Persisted expressions cannot smuggle
-scene state: operator literals may only reference operator parameters (checked here),
-and every predicate must reference a reviewed platform query with a compatible
-signature.
+robot support, no unresolved requirements. Persisted expressions cannot smuggle scene
+state: operator literals may only reference operator parameters (checked here), and
+every predicate must reference a reviewed platform query with a compatible signature.
 
 Task behaviour and historical regression are evaluated outside this generic runtime
-component. The ICRA harness provides its own experimental validation layer; a new task
-does not have to supply hand-written positive and negative examples merely to use the
-curator.
+component. Applications may provide an additional behavioral validation layer; a new
+task does not have to supply hand-written positive and negative examples merely to use
+the curator.
 """
 
 from __future__ import annotations
@@ -28,17 +27,10 @@ from typing_extensions import Mapping, Optional
 
 from krrood.adapters.json_serializer import to_json
 from resym.repair.patch import ModelPatch
-from resym.core.model import (
-    CapabilityContract,
-    GroundingFactorySpec,
-    Operator,
-    PredicateSymbol,
-    SymbolLibrary,
-    SymbolType,
-    contract_violations,
-    is_symbol_subtype,
-    resolve_symbol_type,
-)
+from resym.core.capability_model import CapabilityContract, contract_violations
+from resym.core.grounding_model import GroundingFactorySpec
+from resym.core.symbols import Operator, PredicateSymbol, SymbolLibrary
+from resym.core.symbol_types import SymbolType, is_symbol_subtype, resolve_symbol_type
 from resym.repair.versioning import VersionedLibraryStore
 
 
@@ -350,7 +342,7 @@ def _operator_objections(
     if capability_uid not in available_capabilities:
         objections.append(
             f"{subject}: capability '{capability_uid}' is not implemented by the "
-            "current embodiment"
+            "current robot"
         )
     contract = contracts.get(capability_uid)
     if contract is None:

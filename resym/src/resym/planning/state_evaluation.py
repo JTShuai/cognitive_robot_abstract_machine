@@ -1,0 +1,152 @@
+"""
+Compute a complete binary state for one task-scoped object universe.
+"""
+
+from __future__ import annotations
+
+import itertools
+from dataclasses import dataclass, field
+
+from resym.core.grounding_model import (
+    GroundingFactoryRole,
+    GroundingFailure,
+    GroundingFailureCode,
+)
+from resym.core.symbols import Literal, PredicateSymbol
+from resym.platform.grounding_context import EvaluationContext
+from resym.platform.grounding_catalog import GroundingFactoryCatalogError
+from resym.planning.selection import Selection
+from resym.platform.universe import GroundedObject, ObjectUniverse
+
+
+@dataclass
+class GroundingResult:
+    """
+    The computed binary state of every evaluated ground atom.
+    """
+
+    true_atoms: set[Literal] = field(default_factory=set)
+    """
+    Ground literals proven true against the current world.
+    """
+
+    false_atoms: set[Literal] = field(default_factory=set)
+    """
+    Ground literals proven false against the current world.
+    """
+
+    evaluation_count: int = 0
+    """
+    How many predicate evaluations the grounding performed (the |D|^arity cost).
+    """
+
+    def value_of(self, atom: Literal) -> bool:
+        """
+        Return the Boolean value of one evaluated ground atom.
+        """
+        if atom in self.true_atoms:
+            return True
+        if atom in self.false_atoms:
+            return False
+        raise KeyError(f"Atom was not grounded: {atom}")
+
+
+def ground(
+    selection: Selection,
+    universe: ObjectUniverse,
+    context: EvaluationContext,
+) -> GroundingResult:
+    """
+    Evaluate every selected predicate over the typed active domain.
+    """
+    result = GroundingResult()
+    for predicate in selection.predicates.values():
+        for arguments in _typed_tuples(predicate, universe):
+            result.evaluation_count += 1
+            atom = Literal(
+                predicate=predicate.name,
+                arguments=tuple(argument.name for argument in arguments),
+            )
+            try:
+                value = evaluate_predicate(predicate, arguments, universe, context)
+            except GroundingFailure as error:
+                raise error.for_atom(atom) from error
+            if value:
+                result.true_atoms.add(atom)
+            else:
+                result.false_atoms.add(atom)
+    return result
+
+
+def evaluate_predicate(
+    predicate: PredicateSymbol,
+    arguments: tuple[GroundedObject, ...],
+    universe: ObjectUniverse,
+    context: EvaluationContext,
+) -> bool:
+    """
+    Run one truth procedure for one ground atom against the current world through its
+    single, versioned implementation reference.
+    """
+    plan = predicate.grounding_plan
+    try:
+        specification = context.grounding_catalog.specification(plan.factory_uid)
+        procedure = context.grounding_catalog.resolve(
+            plan.factory_uid,
+            expected_checksum=plan.approved_factory_checksum,
+        )
+    except GroundingFactoryCatalogError as error:
+        raise GroundingFailure(
+            GroundingFailureCode.UNSUPPORTED_QUERY, str(error)
+        ) from error
+    factory_arguments = _factory_arguments(
+        specification.roles, plan.role_bindings, arguments
+    )
+    try:
+        value = procedure(
+            context,
+            universe,
+            factory_arguments,
+            dict(plan.parameters),
+        )
+    except GroundingFailure:
+        raise
+    except Exception as error:
+        raise GroundingFailure(
+            GroundingFailureCode.QUERY_ERROR,
+            f"predicate query '{plan.factory_uid}' failed: "
+            f"{type(error).__name__}: {error}",
+        ) from error
+    if not isinstance(value, bool):
+        raise GroundingFailure(
+            GroundingFailureCode.QUERY_ERROR,
+            f"predicate query '{plan.factory_uid}' returned "
+            f"{type(value).__name__}, expected bool",
+        )
+    return not value if plan.negated else value
+
+
+def _factory_arguments(
+    roles: tuple[GroundingFactoryRole, ...],
+    role_bindings: tuple[tuple[str, int], ...],
+    arguments: tuple[GroundedObject, ...],
+) -> tuple[GroundedObject, ...]:
+    if not role_bindings:
+        return arguments
+    positions = dict(role_bindings)
+    try:
+        return tuple(arguments[positions[role.name]] for role in roles)
+    except (KeyError, IndexError) as error:
+        raise GroundingFailure(
+            GroundingFailureCode.QUERY_ERROR,
+            "predicate grounding plan has an invalid role binding",
+        ) from error
+
+
+def _typed_tuples(
+    predicate: PredicateSymbol, universe: ObjectUniverse
+) -> itertools.product:
+    domains = [
+        universe.of_type(symbol_type) for symbol_type in predicate.parameter_types
+    ]
+    return itertools.product(*domains)

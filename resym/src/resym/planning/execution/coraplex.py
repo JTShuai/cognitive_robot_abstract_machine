@@ -9,56 +9,53 @@ independently verifies the operator effects afterwards.
 
 from __future__ import annotations
 
+import importlib
 from dataclasses import dataclass, field
+from enum import Enum
 
-from typing_extensions import TYPE_CHECKING, Callable, Mapping
+from typing_extensions import (
+    TYPE_CHECKING,
+    Callable,
+    Mapping,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 from coraplex.datastructures.dataclasses import Context
-from coraplex.datastructures.enums import (
-    Arms,
-    ApproachDirection,
-    DetectionTechnique,
-    VerticalAlignment,
-)
+from coraplex.datastructures.enums import Arms, ApproachDirection, VerticalAlignment
+from semantic_digital_twin.robots.robot_parts import AbstractRobot
 from coraplex.datastructures.grasp import GraspDescription
 from coraplex.datastructures.trajectory import PoseTrajectory
 from coraplex.exceptions import ConditionNotSatisfied, MotionDidNotFinish
 from coraplex.execution_environment import simulated_robot
 from coraplex.plans.factories import sequential
-from coraplex.robot_plans.actions.core.container import CloseAction, OpenAction
-from coraplex.robot_plans.actions.core.navigation import NavigateAction
+from coraplex.view_manager import ViewManager
 from giskardpy.motion_statechart.exceptions import CollisionViolatedError
 from krrood.adapters.json_serializer import to_json
-from semantic_digital_twin.datastructures.definitions import GripperState, TorsoState
-from resym.core.model import ExecutionRequest
-from resym.platform.capabilities import (
-    ACTOR_ROLE,
-    ARM_POSTURE_CAPABILITY_UID,
-    ARTICULATION_CAPABILITY_UID,
-    BASE_NAVIGATION_CAPABILITY_UID,
-    CARRY_POSTURE_CAPABILITY_UID,
-    CUTTING_CAPABILITY_UID,
-    DETECTION_CAPABILITY_UID,
-    ELEVATOR_NAVIGATION_CAPABILITY_UID,
-    GRASP_CAPABILITY_UID,
-    GRIPPER_STATE_CAPABILITY_UID,
-    MIXING_CAPABILITY_UID,
-    NAVIGATION_CAPABILITY_UID,
-    PATIENT_ROLE,
-    PICK_UP_CAPABILITY_UID,
-    PLACE_CAPABILITY_UID,
-    POURING_CAPABILITY_UID,
-    REACH_CAPABILITY_UID,
-    TARGET_STATE_ROLE,
-    TOOL_PATH_CAPABILITY_UID,
-    TORSO_STATE_CAPABILITY_UID,
-    TRANSPORT_CAPABILITY_UID,
-    VISUAL_ATTENTION_CAPABILITY_UID,
-    WIPING_CAPABILITY_UID,
-    OpenCloseState,
+from semantic_digital_twin.semantic_annotations.mixins import HasRootBody
+from semantic_digital_twin.spatial_types.spatial_types import Pose
+from semantic_digital_twin.world_description.world_entity import (
+    Body,
+    SemanticAnnotation,
+)
+from resym.core.capability_model import ExecutionRequest
+from resym.platform.coraplex_catalog import (
+    CoraplexCapabilityInitialization,
+    CoraplexCapabilityRegistration,
+    NoApplicableRealizationError,
+    applicable_registration,
+    available_coraplex_capabilities,
+    robot_resources,
+)
+from resym.platform.coraplex_realizations import (
+    CapabilityReviewStatus,
+    ContextValue,
+    ParameterSource,
+    ParameterSourceKind,
 )
 from resym.platform.grounding_context import EvaluationContext
-from resym.platform.articulation import interaction_point_body
 from resym.platform.universe import ObjectUniverse
 from resym.planning.events import PipelineEvent, PipelineEventSink, emit_event
 from resym.planning.execution.engine import (
@@ -70,7 +67,6 @@ from resym.planning.execution.engine import (
 
 if TYPE_CHECKING:
     from coraplex.robot_plans.actions.base import ActionDescription
-    from semantic_digital_twin.world_description.world_entity import Body
 
 
 CoraplexActionFactory = Callable[
@@ -105,25 +101,40 @@ class CoraplexSkillRealization(PlatformSkillRealization):
     """
 
     capability_handlers: Mapping[str, CoraplexActionFactory] = field(
-        default_factory=lambda: default_coraplex_capability_handlers()
+        default_factory=dict
     )
     """
-    Platform-owned dispatch from a capability UID to a native action.
+    Dispatch from a capability UID to a native action; empty until admitted realizations
+    are supplied.
+    """
+
+    initialization: CoraplexCapabilityInitialization | None = None
+    """
+    The reviewed catalog the handlers were built from, when they were.
     """
 
     @classmethod
     def for_evaluation_context(
         cls,
         context: EvaluationContext,
+        initialization: CoraplexCapabilityInitialization,
         event_sink: PipelineEventSink | None = None,
     ) -> CoraplexSkillRealization:
         """
-        Build the backend on the same world and robot the grounding queries observe.
+        Build the backend on the same world and robot the grounding queries observe,
+        executing the realizations the initialization admits.
         """
         return cls(
             plan_context=Context(world=context.world, robot=context.robot),
             event_sink=event_sink,
+            capability_handlers=default_coraplex_capability_handlers(initialization),
+            initialization=initialization,
         )
+
+    def available_capabilities(self, robot: AbstractRobot) -> frozenset[str]:
+        if self.initialization is None:
+            return frozenset(self.capability_handlers)
+        return available_coraplex_capabilities(robot, self.initialization)
 
     def execute(
         self,
@@ -141,9 +152,13 @@ class CoraplexSkillRealization(PlatformSkillRealization):
             return PlatformExecutionResult.rejected(
                 "CORAPLEX_CONTEXT_MISSING", str(error)
             )
-        except MissingHandleArgumentError as error:
+        except MissingRoleArgumentError as error:
             return PlatformExecutionResult.rejected(
                 "CORAPLEX_REQUEST_ARGUMENT_MISSING", str(error)
+            )
+        except NoApplicableRealizationError as error:
+            return PlatformExecutionResult.rejected(
+                "CORAPLEX_NO_APPLICABLE_REALIZATION", str(error)
             )
         except InvalidCapabilityArgumentError as error:
             return PlatformExecutionResult.rejected(
@@ -198,83 +213,55 @@ class CoraplexSkillRealization(PlatformSkillRealization):
 
 def _arm_designation(context: EvaluationContext) -> Arms:
     """
-    The Coraplex designation of the arm reachability was proven for — the same selection
-    rule as :meth:`EvaluationContext.manipulation_arm`.
+    The Coraplex designation of the manipulation arm, by Coraplex's own arm lookup.
     """
-    if context.manipulation_arm() is context.robot.get_left_arm_if_specified():
-        return Arms.LEFT
-    return Arms.RIGHT
+    arm = context.manipulation_arm()
+    for designation in (Arms.LEFT, Arms.RIGHT):
+        if ViewManager.get_arm_view(designation, context.robot) is arm:
+            return designation
+    raise UndesignatedArmError(context.robot)
 
 
-def _handle_body(universe: ObjectUniverse, request: ExecutionRequest) -> Body:
+def default_coraplex_capability_handlers(
+    initialization: CoraplexCapabilityInitialization,
+) -> dict[str, CoraplexActionFactory]:
     """
-    Resolve an explicit interaction point or derive it from the patient.
+    One native-action factory per capability the initialization admits.
     """
-    arguments = request.argument_map
-    if "interaction_point" in arguments:
-        return universe[arguments["interaction_point"]].body
-    if PATIENT_ROLE not in arguments:
-        raise MissingHandleArgumentError(request)
-    return interaction_point_body(universe[arguments[PATIENT_ROLE]])
-
-
-def default_coraplex_capability_handlers() -> dict[str, CoraplexActionFactory]:
-    """
-    Capabilities bundled with the current Coraplex adapter.
-    """
+    registrations: dict[str, list[CoraplexCapabilityRegistration]] = {}
+    for record in initialization.records:
+        if (
+            record.status is CapabilityReviewStatus.APPROVED
+            and record.parameter_sources
+        ):
+            registrations.setdefault(record.contract.uid, []).append(record)
     return {
-        NAVIGATION_CAPABILITY_UID: _navigation_action,
-        ARTICULATION_CAPABILITY_UID: _articulation_action,
-        BASE_NAVIGATION_CAPABILITY_UID: _base_navigation_action,
-        VISUAL_ATTENTION_CAPABILITY_UID: _visual_attention_action,
-        DETECTION_CAPABILITY_UID: _detection_action,
-        REACH_CAPABILITY_UID: _reach_action,
-        GRASP_CAPABILITY_UID: _grasp_action,
-        PICK_UP_CAPABILITY_UID: _pick_up_action,
-        PLACE_CAPABILITY_UID: _place_action,
-        TRANSPORT_CAPABILITY_UID: _transport_action,
-        GRIPPER_STATE_CAPABILITY_UID: _gripper_state_action,
-        ARM_POSTURE_CAPABILITY_UID: _arm_posture_action,
-        TORSO_STATE_CAPABILITY_UID: _torso_state_action,
-        CARRY_POSTURE_CAPABILITY_UID: _carry_posture_action,
-        TOOL_PATH_CAPABILITY_UID: _tool_path_action,
-        MIXING_CAPABILITY_UID: _mixing_action,
-        POURING_CAPABILITY_UID: _pouring_action,
-        CUTTING_CAPABILITY_UID: _cutting_action,
-        WIPING_CAPABILITY_UID: _wiping_action,
-        ELEVATOR_NAVIGATION_CAPABILITY_UID: _elevator_navigation_action,
+        capability_uid: _registered_capability_factory(tuple(records))
+        for capability_uid, records in registrations.items()
     }
 
 
-def _navigation_action(
-    request: ExecutionRequest,
-    context: EvaluationContext,
-    universe: ObjectUniverse,
-) -> ActionDescription:
-    key = (request.argument(ACTOR_ROLE), request.argument(PATIENT_ROLE))
-    if key not in context.witness_base_poses:
-        raise MissingWitnessPoseError(request)
-    return NavigateAction(target_location=context.witness_base_poses[key].to_pose())
+def _registered_capability_factory(
+    registrations: tuple[CoraplexCapabilityRegistration, ...],
+) -> CoraplexActionFactory:
+    factories = {
+        registration: action_factory_for(registration) for registration in registrations
+    }
 
+    def build(
+        request: ExecutionRequest, context: EvaluationContext, universe: ObjectUniverse
+    ) -> ActionDescription:
+        registration = applicable_registration(
+            registrations, request, robot_resources(context.robot)
+        )
+        return factories[registration](request, context, universe)
 
-def _articulation_action(
-    request: ExecutionRequest,
-    context: EvaluationContext,
-    universe: ObjectUniverse,
-) -> ActionDescription:
-    action_type = {
-        OpenCloseState.OPEN: OpenAction,
-        OpenCloseState.CLOSED: CloseAction,
-    }.get(request.argument(TARGET_STATE_ROLE))
-    if action_type is None:
-        raise UnknownCapabilityError(request.capability_ref.uid)
-    return action_type(
-        object_designator=_handle_body(universe, request),
-        arm=_arm_designation(context),
-    )
+    return build
 
 
 def _grounded_role(universe: ObjectUniverse, request: ExecutionRequest, role: str):
+    if role not in request.argument_map:
+        raise MissingRoleArgumentError(request, role)
     try:
         return universe[request.argument(role)]
     except KeyError as error:
@@ -301,219 +288,166 @@ def _object_pose(universe: ObjectUniverse, request: ExecutionRequest, role: str)
 
 
 def _default_grasp(context: EvaluationContext) -> GraspDescription:
+    """
+    The grasp Coraplex assumes itself when an action is given none: front approach
+    without vertical alignment, on the manipulation arm's end effector.
+    """
     return GraspDescription(
         ApproachDirection.FRONT,
         VerticalAlignment.NoAlignment,
-        context.manipulation_arm().end_effector,
+        ViewManager.get_arm_view(_arm_designation(context), context.robot).end_effector,
     )
 
 
-def _arm_constant(request: ExecutionRequest, role: str = "arm") -> Arms:
-    try:
-        return Arms[request.argument(role)]
-    except (KeyError, ValueError) as error:
-        raise InvalidCapabilityArgumentError(
-            request, f"role '{role}' must be LEFT, RIGHT, or BOTH"
-        ) from error
-
-
-def _base_navigation_action(request, context, universe):
-    return NavigateAction(
-        target_location=_object_pose(universe, request, "destination")
-    )
-
-
-def _visual_attention_action(request, context, universe):
-    from coraplex.robot_plans.actions.core.navigation import LookAtAction
-
-    return LookAtAction(target=_object_pose(universe, request, "target"))
-
-
-def _detection_action(request, context, universe):
-    from coraplex.robot_plans.actions.core.misc import DetectAction
-
-    arguments = request.argument_map
-    if "region" in arguments:
-        return DetectAction(
-            technique=DetectionTechnique.REGION,
-            region=_entity_role(universe, request, "region"),
-        )
-    if "target" in arguments:
-        return DetectAction(
-            technique=DetectionTechnique.TYPES,
-            object_sem_annotation=type(_entity_role(universe, request, "target")),
-        )
-    raise InvalidCapabilityArgumentError(
-        request, "object detection needs either a target or region role"
-    )
-
-
-def _reach_action(request, context, universe):
-    from coraplex.robot_plans.actions.core.pick_up import ReachAction
-
-    target = _body_role(universe, request, "target")
-    return ReachAction(
-        target_pose=target.global_pose,
-        arm=_arm_designation(context),
-        grasp_description=_default_grasp(context),
-        object_designator=target,
-    )
-
-
-def _grasp_action(request, context, universe):
-    from coraplex.robot_plans.actions.core.pick_up import GraspingAction
-
-    return GraspingAction(
-        object_designator=_body_role(universe, request, PATIENT_ROLE),
-        arm=_arm_designation(context),
-        grasp_description=_default_grasp(context),
-    )
-
-
-def _pick_up_action(request, context, universe):
-    from coraplex.robot_plans.actions.core.pick_up import PickUpAction
-
-    return PickUpAction(
-        object_designator=_body_role(universe, request, PATIENT_ROLE),
-        arm=_arm_designation(context),
-        grasp_description=_default_grasp(context),
-    )
-
-
-def _place_action(request, context, universe):
-    from coraplex.robot_plans.actions.core.placing import PlaceAction
-
-    return PlaceAction(
-        object_designator=_body_role(universe, request, PATIENT_ROLE),
-        target_location=_object_pose(universe, request, "destination"),
-        arm=_arm_designation(context),
-    )
-
-
-def _transport_action(request, context, universe):
-    from coraplex.robot_plans.actions.composite.transporting import (
-        PickAndPlaceAction,
-        TransportAction,
-    )
-
-    arguments = {
-        "object_designator": _body_role(universe, request, PATIENT_ROLE),
-        "target_location": _object_pose(universe, request, "destination"),
-        "arm": _arm_designation(context),
-    }
-    if context.drive_connection is not None:
-        return TransportAction(**arguments, grasp_description=_default_grasp(context))
-    return PickAndPlaceAction(**arguments, grasp_description=_default_grasp(context))
-
-
-def _gripper_state_action(request, context, universe):
-    from coraplex.robot_plans.actions.core.robot_body import SetGripperAction
-
-    try:
-        state = {
-            OpenCloseState.OPEN: GripperState.OPEN,
-            OpenCloseState.CLOSED: GripperState.CLOSE,
-        }[request.argument(TARGET_STATE_ROLE)]
-    except KeyError as error:
-        raise InvalidCapabilityArgumentError(
-            request, "target_state must be OPEN or CLOSED"
-        ) from error
-    return SetGripperAction(gripper=_arm_constant(request, "gripper"), motion=state)
-
-
-def _arm_posture_action(request, context, universe):
-    from coraplex.robot_plans.actions.core.robot_body import ParkArmsAction
-
-    return ParkArmsAction(arm=_arm_constant(request))
-
-
-def _torso_state_action(request, context, universe):
-    from coraplex.robot_plans.actions.core.robot_body import MoveTorsoAction
-
-    try:
-        state = TorsoState[request.argument(TARGET_STATE_ROLE)]
-    except (KeyError, ValueError) as error:
-        raise InvalidCapabilityArgumentError(
-            request, "target_state must be LOW, MID, or HIGH"
-        ) from error
-    return MoveTorsoAction(torso_state=state)
-
-
-def _carry_posture_action(request, context, universe):
-    from coraplex.robot_plans.actions.core.robot_body import CarryAction
-
-    return CarryAction(arm=_arm_constant(request))
-
-
-def _tool_path_action(request, context, universe):
-    from coraplex.robot_plans.actions.core.robot_body import (
-        FollowToolCenterPointPathAction,
-    )
-
-    return FollowToolCenterPointPathAction(
-        target_locations=PoseTrajectory(
-            poses=[_object_pose(universe, request, "target")]
-        ),
-        arm=_arm_designation(context),
-    )
-
-
-def _mixing_action(request, context, universe):
-    from coraplex.robot_plans.actions.composite.tool_based import MixingAction
-
-    return MixingAction(
-        arm=_arm_designation(context),
-        tool=_entity_role(universe, request, "tool"),
-        container=_body_role(universe, request, PATIENT_ROLE),
-    )
-
-
-def _pouring_action(request, context, universe):
-    from coraplex.robot_plans.actions.composite.tool_based import PouringAction
-
-    return PouringAction(
-        arm=_arm_designation(context),
-        source_container=_entity_role(universe, request, "source"),
-        target_container=_body_role(universe, request, "destination"),
-    )
-
-
-def _cutting_action(request, context, universe):
-    from coraplex.robot_plans.actions.composite.tool_based import CuttingAction
-
-    return CuttingAction(
-        arm=_arm_designation(context),
-        tool=_entity_role(universe, request, "tool"),
-        object_to_cut=_body_role(universe, request, PATIENT_ROLE),
-    )
-
-
-def _wiping_action(request, context, universe):
-    from coraplex.robot_plans.actions.composite.tool_based import WipingAction
-
-    return WipingAction(
-        arm=_arm_designation(context),
-        tool=_entity_role(universe, request, "tool"),
-        surface=_body_role(universe, request, "surface"),
-    )
-
-
-def _elevator_navigation_action(request, context, universe):
-    from coraplex.robot_plans.actions.core.navigation import ElevatorNavigation
-
-    return ElevatorNavigation(
-        elevator=_entity_role(universe, request, "elevator"),
-        target_floor=_entity_role(universe, request, "target_floor"),
-    )
-
-
-class MissingHandleArgumentError(Exception):
+def action_factory_for(
+    registration: CoraplexCapabilityRegistration,
+) -> CoraplexActionFactory:
     """
-    Raised when neither an interaction point nor articulated part exists.
+    Build native actions for one reviewed registration, filling every parameter from its
+    reviewed source and converting it to the type the action declares.
+    """
+    resolved: dict[str, object] = {}
+
+    def build(
+        request: ExecutionRequest, context: EvaluationContext, universe: ObjectUniverse
+    ) -> ActionDescription:
+        if not resolved:
+            action_type = _action_type(registration.draft.action_class)
+            resolved["type"] = action_type
+            resolved["declared"] = _declared_parameter_types(action_type)
+        action_type = resolved["type"]
+        declared_types = resolved["declared"]
+        return action_type(
+            **{
+                source.parameter: _parameter_value(
+                    source,
+                    declared_types[source.parameter],
+                    request,
+                    context,
+                    universe,
+                )
+                for source in registration.parameter_sources
+            }
+        )
+
+    return build
+
+
+def _declared_parameter_types(action_type: type) -> dict[str, object]:
+    """
+    The declared type of every constructor parameter of a native action.
+
+    Coraplex annotates some attributes with names imported only for type checking; those
+    resolve to ``object`` here, which only matters for parameters never bound.
+    """
+    placeholders: dict[str, type] = {}
+    while True:
+        try:
+            return get_type_hints(action_type, localns=placeholders)
+        except NameError as error:
+            placeholders[error.name] = object
+
+
+def _action_type(action_class: str) -> type:
+    module_name, _, class_name = action_class.rpartition(".")
+    return vars(importlib.import_module(module_name))[class_name]
+
+
+def _parameter_value(
+    source: ParameterSource,
+    declared_type: object,
+    request: ExecutionRequest,
+    context: EvaluationContext,
+    universe: ObjectUniverse,
+):
+    if source.kind is ParameterSourceKind.CONTEXT:
+        return _context_value(source, context, request)
+    target = _without_optional(declared_type)
+    if source.kind is ParameterSourceKind.CONSTANT:
+        return target[source.value] if _is_enum(target) else source.value
+    if _is_enum(target):
+        return target[request.argument(source.value)]
+    return _role_value(universe, request, source.value, target)
+
+
+def _context_value(
+    source: ParameterSource, context: EvaluationContext, request: ExecutionRequest
+):
+    value = ContextValue(source.value)
+    if value is ContextValue.MANIPULATION_ARM:
+        return _arm_designation(context)
+    if value is ContextValue.DEFAULT_GRASP:
+        return _default_grasp(context)
+    key = tuple(request.argument(role) for role in source.key_roles)
+    if key not in context.witness_base_poses:
+        raise MissingWitnessPoseError(request)
+    return context.witness_base_poses[key].to_pose()
+
+
+def _role_value(
+    universe: ObjectUniverse, request: ExecutionRequest, role: str, target: object
+):
+    """
+    The grounded object bound to a role, in the form the declared parameter type asks
+    for.
+    """
+    if get_origin(target) is type:
+        return type(_entity_role(universe, request, role))
+    if target is Pose:
+        return _object_pose(universe, request, role)
+    if target is PoseTrajectory:
+        return PoseTrajectory(poses=[_object_pose(universe, request, role)])
+    if target is HasRootBody or (isinstance(target, type) and issubclass(target, Body)):
+        return _body_role(universe, request, role)
+    if isinstance(target, type) and issubclass(target, SemanticAnnotation):
+        return _entity_role(universe, request, role)
+    raise UnsupportedParameterTypeError(role, target)
+
+
+def _without_optional(declared_type: object) -> object:
+    if get_origin(declared_type) is Union:
+        return next(
+            argument
+            for argument in get_args(declared_type)
+            if argument is not type(None)
+        )
+    return declared_type
+
+
+def _is_enum(target: object) -> bool:
+    return isinstance(target, type) and issubclass(target, Enum)
+
+
+class UnsupportedParameterTypeError(Exception):
+    """
+    Raised when a role is bound to a native parameter of a type reSym cannot supply.
     """
 
-    def __init__(self, request: ExecutionRequest):
-        super().__init__(f"No interaction point or patient in {request}.")
+    def __init__(self, role: str, declared_type: object):
+        super().__init__(
+            f"Role '{role}' cannot fill a parameter declared as {declared_type!r}."
+        )
+
+
+class UndesignatedArmError(Exception):
+    """
+    Raised when the manipulation arm is none of the arms Coraplex can designate.
+    """
+
+    def __init__(self, robot: AbstractRobot):
+        super().__init__(
+            f"The manipulation arm of {type(robot).__name__} is neither its left nor "
+            "its right arm."
+        )
+
+
+class MissingRoleArgumentError(Exception):
+    """
+    Raised when a request does not bind a role its realization reads.
+    """
+
+    def __init__(self, request: ExecutionRequest, role: str):
+        super().__init__(f"Role '{role}' is not bound in {request}.")
 
 
 class InvalidCapabilityArgumentError(Exception):

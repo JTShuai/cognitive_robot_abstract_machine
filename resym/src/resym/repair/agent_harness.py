@@ -2,9 +2,9 @@
 Typed tool boundary and append-only episode log for the repair agent.
 
 The model chooses tools; this module owns everything between that choice and the Python
-handler.  It validates inputs, enforces the active profile, charges the shared
-experiment budget, validates outputs, and records a lossless result. Only a bounded
-rendering of that result is returned to the model.
+handler.  It validates inputs, enforces the active profile, charges the shared resource
+limits, validates outputs, and records a lossless result. Only a bounded rendering of
+that result is returned to the model.
 """
 
 from __future__ import annotations
@@ -17,7 +17,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from typing_extensions import Callable, Optional
 
 from resym.llm.schemas import LibraryProposal
-from resym.core.model import GroundingFactoryParameterType, SymbolType
+from resym.core.grounding_model import GroundingFactoryParameterType
+from resym.core.symbol_types import SymbolType
 from resym.repair.backends import BudgetExhaustedError, BudgetMeter
 
 MODEL_OBSERVATION_LIMIT = 1200
@@ -69,12 +70,35 @@ class UnsupportedArguments(ToolArguments):
     reason: str = Field(min_length=1)
 
 
+class ParameterSourceArguments(ToolArguments):
+    """
+    One native action parameter and where it should take its value.
+    """
+
+    parameter: str = Field(min_length=1)
+    kind: str = Field(min_length=1)
+    value: str = Field(min_length=1)
+
+
 class MissingExecutionCapabilityArguments(ToolArguments):
     suggested_label: str = Field(min_length=1)
     desired_effects: list[str] = Field(min_length=1)
     required_roles: dict[str, str] = Field(default_factory=dict)
     candidate_realizations: list[str] = Field(default_factory=list)
     reason: str = Field(min_length=1)
+    proposed_parameter_sources: list[ParameterSourceArguments] = Field(
+        default_factory=list
+    )
+    required_resources: list[str] = Field(default_factory=list)
+    """
+    CRAM robot part types the cited action needs, as type references such as
+    ``semantic_digital_twin.robots.robot_parts.Arm``.
+    """
+
+    """
+    How each native parameter of the candidate realizations should be filled; with a
+    matching contract this becomes a realization candidate for human review.
+    """
 
     @model_validator(mode="after")
     def role_types_are_valid(self) -> MissingExecutionCapabilityArguments:
@@ -196,7 +220,7 @@ class LibraryResult(ToolResult):
     operators: str
 
 
-class EmbodimentResult(ToolResult):
+class RobotPlatformResult(ToolResult):
     capabilities: str
     grounding_factories: str
 
@@ -258,6 +282,9 @@ class MissingExecutionCapabilityResult(ToolResult):
     recorded: bool
     gap: Optional[dict[str, Any]] = None
     unknown_candidate_realizations: list[str] = Field(default_factory=list)
+    submitted_candidate_ids: list[str] = Field(default_factory=list)
+    submitted_contract_candidate_ids: list[str] = Field(default_factory=list)
+    objections: list[str] = Field(default_factory=list)
 
 
 class MissingGroundingCapabilityResult(ToolResult):
@@ -330,7 +357,7 @@ class ToolRegistry:
 AGENT_TOOL_NAMES = frozenset(
     {
         "inspect_library",
-        "inspect_embodiment_profile",
+        "inspect_robot_platform",
         "inspect_grounding_catalog",
         "search_capability_catalog",
         "retrieve_domain_fragments",
@@ -387,7 +414,7 @@ class EpisodeEventLog:
 
     def append(self, event: str, **data: Any) -> dict[str, Any]:
         record = {"sequence": len(self._events) + 1, "event": event, **data}
-        # Fail close at the logging boundary: an experiment event must be
+        # Fail close at the logging boundary: an event must be
         # persistable before it becomes part of the source record.
         json.dumps(record, ensure_ascii=False)
         self._events.append(record)
@@ -443,7 +470,7 @@ class ToolExecutionPipeline:
         )
         try:
             # Invalid decisions still consume a tool call: this keeps budgets
-            # comparable across methods and preserves the old E1 semantics.
+            # comparable across repair strategies.
             self.meter.spend_tool_call()
         except BudgetExhaustedError as error:
             self._record_error(

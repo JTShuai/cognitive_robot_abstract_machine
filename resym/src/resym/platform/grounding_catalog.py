@@ -21,8 +21,8 @@ from pathlib import Path
 
 from krrood.adapters.json_serializer import from_json, to_json
 
-from resym.core.capabilities import CapabilityContract
-from resym.core.grounding import (
+from resym.core.capability_model import CapabilityContract
+from resym.core.grounding_model import (
     GroundingFactoryCandidate,
     GroundingFactoryOrigin,
     GroundingFactoryParameter,
@@ -85,7 +85,9 @@ class GroundingVocabularyEntry:
     """
 
     documentation: str = ""
-    """Source docstring shown during semantic review and Agent drafting."""
+    """
+    Source docstring shown during semantic review and Agent drafting.
+    """
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "kind", GroundingVocabularyKind(self.kind))
@@ -173,8 +175,9 @@ class GroundingVocabularyCandidate:
 
     discovery_scope: str = "default"
     """
-    Scanner namespace that owns this record. Synchronizing one source must not
-    erase review decisions produced by another source.
+    Scanner namespace that owns this record.
+
+    Synchronizing one source must not erase review decisions produced by another source.
     """
 
     def __post_init__(self) -> None:
@@ -934,7 +937,9 @@ class GroundingFactoryCatalog:
 
     @property
     def workspace(self) -> GroundingFactoryWorkspace | None:
-        """Local review workspace available to an application repair loop."""
+        """
+        Local review workspace available to an application repair loop.
+        """
         return self._workspace
 
     def __iter__(self) -> Iterator[GroundingFactorySpec]:
@@ -1020,16 +1025,16 @@ class GroundingFactoryCatalog:
             )
         return self._procedures[uid]
 
-    def supports(self, uid: str, embodiment: str) -> bool:
+    def supports(self, uid: str, robot_type: str) -> bool:
         """
-        Whether the current implementation supports an embodiment profile.
+        Whether the current implementation supports a CRAM robot type.
         """
         specification = self._specifications.get(uid)
         if specification is None:
             return False
         return (
-            not specification.supported_embodiments
-            or embodiment in specification.supported_embodiments
+            not specification.supported_robot_types
+            or robot_type in specification.supported_robot_types
         )
 
     def to_json(self) -> dict:
@@ -1075,7 +1080,7 @@ class GroundingFactoryCatalog:
         self._procedures[specification.uid] = procedure
 
 
-# %% Initialization and experiment snapshots
+# %% Initialization and release snapshots
 
 
 @dataclass(frozen=True)
@@ -1159,9 +1164,9 @@ def initialize_grounding_factories(
 
 
 @dataclass(frozen=True)
-class GroundingFactorySnapshot:
+class GroundingFactoryRelease:
     """
-    Immutable experiment copy of local factory source and catalog metadata.
+    Immutable release of local factory source and catalog metadata.
     """
 
     directory: Path
@@ -1176,7 +1181,7 @@ class GroundingFactorySnapshot:
 
     manifest: Path
     """
-    Checksummed experiment manifest.
+    Checksummed release manifest.
     """
 
     catalog_checksum: str
@@ -1190,7 +1195,7 @@ class GroundingFactorySnapshot:
     """
 
 
-def freeze_grounding_factories(
+def freeze_grounding_factory_release(
     workspace: GroundingFactoryWorkspace,
     output_directory: Path,
     symbol_library: Path,
@@ -1199,10 +1204,10 @@ def freeze_grounding_factories(
     git_commits: tuple[tuple[str, str], ...] = (),
     package_versions: tuple[tuple[str, str], ...] = (),
     container_image_digest: str | None = None,
-    experiment_configuration: tuple[tuple[str, str], ...] = (),
-) -> GroundingFactorySnapshot:
+    release_metadata: tuple[tuple[str, str], ...] = (),
+) -> GroundingFactoryRelease:
     """
-    Freeze local source, catalog, library, and environment identities for one run.
+    Freeze local source, catalog, library, and environment identities for deployment.
     """
     if output_directory.exists():
         raise FileExistsError(output_directory)
@@ -1252,14 +1257,14 @@ def freeze_grounding_factories(
                 "git_commits": dict(git_commits),
                 "package_versions": dict(package_versions),
                 "container_image_digest": container_image_digest,
-                "experiment_configuration": dict(experiment_configuration),
+                "release_metadata": dict(release_metadata),
             },
             indent=2,
             sort_keys=True,
         ),
         encoding="utf-8",
     )
-    return GroundingFactorySnapshot(
+    return GroundingFactoryRelease(
         directory=output_directory,
         source_bundle=source_bundle,
         manifest=manifest,
@@ -1403,7 +1408,9 @@ def _render_parameter(parameter: GroundingFactoryParameter) -> str:
 def _candidate_dependency_checksums(
     source_code: str, vocabulary: GroundingVocabulary
 ) -> tuple[tuple[str, str], ...]:
-    """Pin every reviewed symbol imported by a materialized candidate."""
+    """
+    Pin every reviewed symbol imported by a materialized candidate.
+    """
     approved = {entry.qualified_name: entry for entry in vocabulary.entries}
     dependencies: dict[str, str] = {}
     tree = ast.parse(source_code)

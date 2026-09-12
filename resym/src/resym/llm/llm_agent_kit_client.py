@@ -37,7 +37,7 @@ from resym.llm.client import (
 )
 
 if TYPE_CHECKING:
-    from resym.llm.configuration import ExperimentConfiguration
+    from resym.llm.configuration import LanguageModelConfiguration
 
 
 class _PerCallUsageRecorder(DefaultRecorder):
@@ -73,9 +73,9 @@ class LLMAgentKitCompletionClient(CompletionClient):
     One-shot completions through a configured :class:`llm_agent_kit.LLMAgent`.
     """
 
-    configuration: ExperimentConfiguration
+    configuration: LanguageModelConfiguration
     """
-    The experiment's raw ``agent``/``tasks`` sections.
+    Raw ``agent`` and ``tasks`` configuration sections.
     """
 
     agent: LLMAgent = field(init=False)

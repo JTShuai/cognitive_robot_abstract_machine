@@ -1,3 +1,0 @@
-"""
-Articulated-object experiment fixtures.
-"""

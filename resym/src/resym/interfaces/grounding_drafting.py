@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
 
-from resym.core.grounding import (
+from resym.core.grounding_model import (
     GroundingFactoryCandidate,
     GroundingFactoryParameter,
     GroundingFactoryRole,

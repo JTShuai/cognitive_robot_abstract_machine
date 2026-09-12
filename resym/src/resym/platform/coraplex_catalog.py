@@ -4,8 +4,8 @@ Discover Coraplex actions and expose them as contract drafts.
 Coraplex action classes reveal executable parameters and native condition hooks, but
 they do not declare reSym's semantic roles or independently verifiable symbolic effects.
 Discovery therefore produces drafts. A reviewed mapping links those drafts to trusted
-``CapabilityContract`` objects; adapter readiness is tracked separately for each robot
-embodiment.
+``CapabilityContract`` objects; adapter readiness is combined with the resources exposed
+by each CRAM robot annotation.
 """
 
 from __future__ import annotations
@@ -20,30 +20,17 @@ from pathlib import Path
 from typing import Iterable
 
 from krrood.adapters.json_serializer import to_json
-from semantic_digital_twin.robots.robot_parts import AbstractRobot, Camera
-from resym.core.capabilities import CapabilityContract
-from resym.platform.capabilities import (
-    ARM_POSTURE_CAPABILITY_UID,
-    ARTICULATION_CAPABILITY_UID,
-    BASE_NAVIGATION_CAPABILITY_UID,
-    CARRY_POSTURE_CAPABILITY_UID,
-    CUTTING_CAPABILITY_UID,
-    DETECTION_CAPABILITY_UID,
-    ELEVATOR_NAVIGATION_CAPABILITY_UID,
-    GRASP_CAPABILITY_UID,
-    GRIPPER_STATE_CAPABILITY_UID,
-    MIXING_CAPABILITY_UID,
-    NAVIGATION_CAPABILITY_UID,
-    PICK_UP_CAPABILITY_UID,
-    PLACE_CAPABILITY_UID,
-    POURING_CAPABILITY_UID,
-    REACH_CAPABILITY_UID,
-    TOOL_PATH_CAPABILITY_UID,
-    TORSO_STATE_CAPABILITY_UID,
-    TRANSPORT_CAPABILITY_UID,
-    VISUAL_ATTENTION_CAPABILITY_UID,
-    WIPING_CAPABILITY_UID,
-    capability_contracts,
+from semantic_digital_twin.robots.robot_parts import AbstractRobot
+from resym.core.capability_model import CapabilityContract, ExecutionRequest
+from resym.core.symbol_types import SymbolType
+from semantic_digital_twin.robots.robot_part_mixins import HasMobileBase
+from semantic_digital_twin.robots.robot_parts import AbstractRobotPart, MobileBase
+from resym.platform.coraplex_realizations import (
+    ApprovedRealization,
+    CapabilityReviewStatus,
+    CoraplexRealizationWorkspace,
+    ParameterSource,
+    RoleCondition,
 )
 
 
@@ -115,18 +102,6 @@ class CoraplexCapabilityContractDraft:
         )
 
 
-class RobotResource(str, Enum):
-    """
-    Robot resources referenced by Coraplex action implementations.
-    """
-
-    MOBILE_BASE = "mobile-base"
-    ARM = "arm"
-    END_EFFECTOR = "end-effector"
-    CAMERA = "camera"
-    TORSO = "torso"
-
-
 @dataclass(frozen=True)
 class CoraplexCapabilityRealizationEvidence:
     """
@@ -135,7 +110,7 @@ class CoraplexCapabilityRealizationEvidence:
 
     capability_uid: str
     action_source_id: str
-    required_resources: frozenset[RobotResource]
+    required_resources: frozenset[SymbolType]
 
 
 @dataclass(frozen=True)
@@ -149,7 +124,7 @@ class CoraplexCapabilitySupport:
     action_source_ids: tuple[str, ...]
     status: CapabilityRealizationStatus
     verification_status: CapabilityVerificationStatus
-    missing_resources: tuple[RobotResource, ...] = ()
+    missing_resources: tuple[SymbolType, ...] = ()
 
     @property
     def ready(self) -> bool:
@@ -171,15 +146,7 @@ class CapabilityVerificationStatus(str, Enum):
     Where independent effect truth procedures must come from.
     """
 
-    BUILTIN = "built-in"
     TASK_REQUIRED = "task-required"
-
-
-class CapabilityReviewStatus(str, Enum):
-    """Admission state of a scanned Coraplex action mapping."""
-
-    PENDING = "pending"
-    APPROVED = "approved"
 
 
 @dataclass(frozen=True)
@@ -195,11 +162,17 @@ class CoraplexCapabilityRegistration:
     contract: CapabilityContract | None = None
     """Reviewed task-level meaning, absent while review is pending."""
 
-    required_resources: frozenset[RobotResource] = frozenset()
+    required_resources: frozenset[SymbolType] = frozenset()
     """Robot resources required by the action implementation."""
 
     reviewed_by: str | None = None
     """Authority that approved the semantic mapping."""
+
+    parameter_sources: tuple[ParameterSource, ...] = ()
+    """How each native parameter is filled from a request; empty while unreviewed."""
+
+    applies_when: RoleCondition | None = None
+    """Request condition selecting this registration among a capability's variants."""
 
 
 @dataclass(frozen=True)
@@ -208,6 +181,9 @@ class CoraplexCapabilityInitialization:
 
     records: tuple[CoraplexCapabilityRegistration, ...]
     """All scanned actions, including mappings still awaiting review."""
+
+    contracts: tuple[CapabilityContract, ...] = ()
+    """The reviewed contracts the actions were joined with."""
 
     @property
     def approved_contracts(self) -> tuple[CapabilityContract, ...]:
@@ -221,85 +197,67 @@ class CoraplexCapabilityInitialization:
         return tuple(by_uid[uid] for uid in sorted(by_uid))
 
 
-CORAPLEX_ADAPTER_CAPABILITY_UIDS = frozenset(
-    contract.uid for contract in capability_contracts()
-)
-"""
-Contracts with a reviewed ``ExecutionRequest`` to Coraplex adapter.
-"""
+def adapter_capability_uids(
+    initialization: CoraplexCapabilityInitialization,
+) -> frozenset[str]:
+    """
+    Capabilities the Coraplex adapter can execute: those with an admitted realization.
+    """
+    return frozenset(
+        record.contract.uid
+        for record in initialization.records
+        if record.status is CapabilityReviewStatus.APPROVED
+        and record.contract is not None
+        and record.parameter_sources
+    )
 
-CORAPLEX_BUILTIN_VERIFICATION_UIDS = frozenset(
-    {NAVIGATION_CAPABILITY_UID, ARTICULATION_CAPABILITY_UID}
-)
-"""
-Contracts whose effect predicates ship with the current task packages.
-"""
 
-_ACTION_CAPABILITIES: dict[str, tuple[str, ...]] = {
-    "FaceAtAction": (VISUAL_ATTENTION_CAPABILITY_UID,),
-    "MixingAction": (MIXING_CAPABILITY_UID,),
-    "PouringAction": (POURING_CAPABILITY_UID,),
-    "CuttingAction": (CUTTING_CAPABILITY_UID,),
-    "WipingAction": (WIPING_CAPABILITY_UID,),
-    "TransportAction": (TRANSPORT_CAPABILITY_UID,),
-    "PickAndPlaceAction": (TRANSPORT_CAPABILITY_UID,),
-    "MoveAndPlaceAction": (PLACE_CAPABILITY_UID,),
-    "MoveAndPickUpAction": (PICK_UP_CAPABILITY_UID,),
-    "CloseAction": (ARTICULATION_CAPABILITY_UID,),
-    "OpenAction": (ARTICULATION_CAPABILITY_UID,),
-    "DetectAction": (DETECTION_CAPABILITY_UID,),
-    "MoveToReach": (REACH_CAPABILITY_UID,),
-    "LookAtAction": (VISUAL_ATTENTION_CAPABILITY_UID,),
-    "NavigateAction": (
-        BASE_NAVIGATION_CAPABILITY_UID,
-        NAVIGATION_CAPABILITY_UID,
-    ),
-    "ElevatorNavigation": (ELEVATOR_NAVIGATION_CAPABILITY_UID,),
-    "GraspingAction": (GRASP_CAPABILITY_UID,),
-    "PickUpAction": (PICK_UP_CAPABILITY_UID,),
-    "ReachAction": (REACH_CAPABILITY_UID,),
-    "PlaceAction": (PLACE_CAPABILITY_UID,),
-    "CarryAction": (CARRY_POSTURE_CAPABILITY_UID,),
-    "FollowToolCenterPointPathAction": (TOOL_PATH_CAPABILITY_UID,),
-    "MoveManipulatorAction": (REACH_CAPABILITY_UID,),
-    "MoveTorsoAction": (TORSO_STATE_CAPABILITY_UID,),
-    "ParkArmsAction": (ARM_POSTURE_CAPABILITY_UID,),
-    "SetGripperAction": (GRIPPER_STATE_CAPABILITY_UID,),
-}
+def registration_applies(
+    registration: CoraplexCapabilityRegistration, request: ExecutionRequest
+) -> bool:
+    """
+    Whether a registration's request condition holds for one request.
+    """
+    condition = registration.applies_when
+    if condition is None:
+        return True
+    arguments = request.argument_map
+    if condition.role not in arguments:
+        return False
+    return condition.value is None or arguments[condition.role] == condition.value
 
-_MOBILE = frozenset({RobotResource.MOBILE_BASE})
-_ARM = frozenset({RobotResource.ARM})
-_MANIPULATOR = frozenset({RobotResource.ARM, RobotResource.END_EFFECTOR})
-_CAMERA = frozenset({RobotResource.CAMERA})
 
-_ACTION_REQUIREMENTS: dict[str, frozenset[RobotResource]] = {
-    "FaceAtAction": _MOBILE | _CAMERA,
-    "MixingAction": _MANIPULATOR,
-    "PouringAction": _MANIPULATOR,
-    "CuttingAction": _MANIPULATOR,
-    "WipingAction": _MANIPULATOR,
-    "TransportAction": _MOBILE | _MANIPULATOR,
-    "PickAndPlaceAction": _MANIPULATOR,
-    "MoveAndPlaceAction": _MOBILE | _MANIPULATOR,
-    "MoveAndPickUpAction": _MOBILE | _MANIPULATOR,
-    "CloseAction": _MANIPULATOR,
-    "OpenAction": _MANIPULATOR,
-    "DetectAction": _CAMERA,
-    "MoveToReach": _MOBILE | _MANIPULATOR,
-    "LookAtAction": _CAMERA,
-    "NavigateAction": _MOBILE,
-    "ElevatorNavigation": _MOBILE,
-    "GraspingAction": _MANIPULATOR,
-    "PickUpAction": _MANIPULATOR,
-    "ReachAction": _MANIPULATOR,
-    "PlaceAction": _MANIPULATOR,
-    "CarryAction": _ARM,
-    "FollowToolCenterPointPathAction": _MANIPULATOR,
-    "MoveManipulatorAction": _MANIPULATOR,
-    "MoveTorsoAction": frozenset({RobotResource.TORSO}),
-    "ParkArmsAction": _ARM,
-    "SetGripperAction": frozenset({RobotResource.END_EFFECTOR}),
-}
+def applicable_registration(
+    registrations: Iterable[CoraplexCapabilityRegistration],
+    request: ExecutionRequest,
+    available_resources: frozenset[SymbolType],
+) -> CoraplexCapabilityRegistration:
+    """
+    The registration realizing a request on a robot with the given resources: among the
+    variants whose condition holds and whose resource needs are met, the one needing the
+    most resources.
+    """
+    candidates = [
+        registration
+        for registration in registrations
+        if registration_applies(registration, request)
+        and not missing_resources(available_resources, registration.required_resources)
+    ]
+    if not candidates:
+        raise NoApplicableRealizationError(request)
+    return max(candidates, key=lambda item: len(item.required_resources))
+
+
+class NoApplicableRealizationError(Exception):
+    """
+    Raised when a capability is registered but no variant fits the request and robot.
+    """
+
+    def __init__(self, request: ExecutionRequest):
+        super().__init__(
+            f"No registered realization of '{request.capability_ref.uid}' applies to "
+            f"{request} on this robot."
+        )
 
 
 @cache
@@ -309,7 +267,7 @@ def discover_coraplex_capability_contract_drafts(
     """
     Read Coraplex action declarations without importing the ROS runtime.
     """
-    root = package_root or _installed_coraplex_root()
+    root = package_root or installed_coraplex_root()
     actions_root = root / "robot_plans" / "actions"
     if not actions_root.is_dir():
         return ()
@@ -358,73 +316,121 @@ def render_coraplex_capability_contract_drafts() -> str:
 
 
 def initialize_coraplex_capabilities(
+    contracts: Iterable[CapabilityContract],
+    workspace: CoraplexRealizationWorkspace | None,
     package_root: Path | None = None,
 ) -> CoraplexCapabilityInitialization:
-    """Scan native actions and admit only platform-maintainer mappings."""
-    contracts = {contract.uid: contract for contract in capability_contracts()}
+    """
+    Scan native actions and join each with the realizations the workspace admits for
+    the given contracts; an approval whose action source changed is not admitted, and
+    without a workspace nothing is.
+    """
+    root = package_root if package_root is not None else installed_coraplex_root()
+    contracts = tuple(contracts)
+    by_uid = {contract.uid: contract for contract in contracts}
+    approved_by_action: dict[str, list[ApprovedRealization]] = {}
+    for approved in () if workspace is None else workspace.approved():
+        if approved.realization.capability_uid in by_uid:
+            approved_by_action.setdefault(approved.action_source_id, []).append(
+                approved
+            )
     records: list[CoraplexCapabilityRegistration] = []
     for draft in discover_coraplex_capability_contract_drafts(package_root):
-        action_name = draft.action_class.rsplit(".", 1)[-1]
-        capability_uids = _ACTION_CAPABILITIES.get(action_name, ())
-        if not capability_uids:
+        reviews = approved_by_action.get(draft.source_id, [])
+        if not reviews:
             records.append(
                 CoraplexCapabilityRegistration(
-                    draft=draft,
-                    status=CapabilityReviewStatus.PENDING,
+                    draft=draft, status=CapabilityReviewStatus.PENDING
                 )
             )
             continue
-        for capability_uid in capability_uids:
+        for approved in reviews:
             records.append(
                 CoraplexCapabilityRegistration(
                     draft=draft,
-                    status=CapabilityReviewStatus.APPROVED,
-                    contract=contracts[capability_uid],
-                    required_resources=_ACTION_REQUIREMENTS[action_name],
-                    reviewed_by="platform-maintainer",
+                    status=(
+                        CapabilityReviewStatus.APPROVED
+                        if workspace.drift(approved, root) is None
+                        else CapabilityReviewStatus.SOURCE_CHANGED
+                    ),
+                    contract=by_uid[approved.realization.capability_uid],
+                    required_resources=frozenset(
+                        approved.realization.required_resources
+                    ),
+                    reviewed_by=approved.reviewed_by,
+                    parameter_sources=approved.realization.parameter_sources,
+                    applies_when=approved.realization.applies_when,
                 )
             )
-    return CoraplexCapabilityInitialization(tuple(records))
+    return CoraplexCapabilityInitialization(tuple(records), contracts)
 
 
-def compatible_coraplex_action_ids(profile) -> frozenset[str]:
+def approve_realization_candidate(
+    workspace: CoraplexRealizationWorkspace,
+    candidate_id: str,
+    reviewer: str,
+    contracts: Iterable[CapabilityContract],
+    review_note: str | None = None,
+    package_root: Path | None = None,
+) -> ApprovedRealization:
     """
-    Native actions whose resource needs match the profile's robot.
+    Approve one candidate against the currently installed Coraplex and the given
+    reviewed contracts.
     """
-    return frozenset(
-        source_id
-        for _, source_ids in profile.capability_sources
-        for source_id in source_ids
+    root = package_root if package_root is not None else installed_coraplex_root()
+    return workspace.approve(
+        candidate_id,
+        reviewer,
+        discover_coraplex_capability_contract_drafts(package_root),
+        contracts,
+        root,
+        review_note,
     )
 
 
-def render_coraplex_capability_candidates(profile) -> str:
+def compatible_coraplex_action_ids(
+    robot: AbstractRobot, initialization: CoraplexCapabilityInitialization
+) -> frozenset[str]:
+    """
+    Native actions whose resource needs match the CRAM robot description.
+    """
+    return frozenset(
+        source_id
+        for support in infer_coraplex_capability_support(robot, initialization)
+        for source_id in support.action_source_ids
+    )
+
+
+def render_coraplex_capability_candidates(
+    robot: AbstractRobot, initialization: CoraplexCapabilityInitialization
+) -> str:
     """
     Render only native actions structurally compatible with one robot.
     """
-    compatible_ids = compatible_coraplex_action_ids(profile)
+    support = infer_coraplex_capability_support(robot, initialization)
+    compatible_ids = compatible_coraplex_action_ids(robot, initialization)
     capability_by_source: dict[str, set[str]] = {}
-    for capability_uid, source_ids in profile.capability_sources:
-        for source_id in source_ids:
-            capability_by_source.setdefault(source_id, set()).add(capability_uid)
+    for item in support:
+        for source_id in item.action_source_ids:
+            capability_by_source.setdefault(source_id, set()).add(item.capability_uid)
     lines = []
-    for draft in discover_coraplex_capability_contract_drafts():
+    for record in initialization.records:
+        draft = record.draft
         if draft.source_id not in compatible_ids:
             continue
         capability_uids = ", ".join(sorted(capability_by_source[draft.source_id]))
         lines.append(
-            f"{draft.render()}; compatible with {profile.name}; "
+            f"{draft.render()}; compatible with {type(robot).__name__}; "
             f"reviewed semantics {{{capability_uids}}}"
         )
-    return "\n".join(lines) or "- none"
+    return "\n".join(dict.fromkeys(lines)) or "- none"
 
 
-@cache
-def coraplex_capability_realization_evidence() -> (
-    tuple[CoraplexCapabilityRealizationEvidence, ...]
-):
+def realization_evidence(
+    initialization: CoraplexCapabilityInitialization,
+) -> tuple[CoraplexCapabilityRealizationEvidence, ...]:
     """
-    Link every discovered action to reviewed semantics and robot needs.
+    Link every admitted action to its capability and robot needs.
     """
     evidence = [
         CoraplexCapabilityRealizationEvidence(
@@ -432,27 +438,26 @@ def coraplex_capability_realization_evidence() -> (
             action_source_id=record.draft.source_id,
             required_resources=record.required_resources,
         )
-        for record in initialize_coraplex_capabilities().records
+        for record in initialization.records
         if record.status is CapabilityReviewStatus.APPROVED
         and record.contract is not None
     ]
     return tuple(
-        sorted(
-            evidence,
-            key=lambda item: (item.capability_uid, item.action_source_id),
-        )
+        sorted(evidence, key=lambda item: (item.capability_uid, item.action_source_id))
     )
 
 
-def coraplex_capability_catalog(package_root: Path | None = None) -> dict:
+def coraplex_capability_catalog(
+    initialization: CoraplexCapabilityInitialization,
+) -> dict:
     """
     Serialize the complete reviewed contract-to-Coraplex design map.
 
     The result is platform-structure independent and can therefore be shown by the host-
-    only Viewer. Robot-specific compatibility is added by an ``EmbodimentProfile`` at
-    runtime.
+    only Viewer. Robot-specific compatibility is derived from the CRAM robot annotation
+    at runtime.
     """
-    initialization = initialize_coraplex_capabilities(package_root)
+    adapters = adapter_capability_uids(initialization)
     drafts = {record.draft.source_id: record.draft for record in initialization.records}
     approved_records = tuple(
         record
@@ -475,20 +480,13 @@ def coraplex_capability_catalog(package_root: Path | None = None) -> dict:
         evidence_by_capability.setdefault(evidence.capability_uid, []).append(evidence)
 
     entries = []
-    for contract in capability_contracts():
+    for contract in initialization.contracts:
         has_reviewed_action = bool(evidence_by_capability.get(contract.uid))
-        if (
-            contract.uid not in CORAPLEX_ADAPTER_CAPABILITY_UIDS
-            or not has_reviewed_action
-        ):
+        if contract.uid not in adapters or not has_reviewed_action:
             status = CapabilityRealizationStatus.ADAPTER_MISSING
         else:
             status = CapabilityRealizationStatus.READY
-        verification = (
-            CapabilityVerificationStatus.BUILTIN
-            if contract.uid in CORAPLEX_BUILTIN_VERIFICATION_UIDS
-            else CapabilityVerificationStatus.TASK_REQUIRED
-        )
+        verification = CapabilityVerificationStatus.TASK_REQUIRED
         actions = []
         for evidence in evidence_by_capability.get(contract.uid, []):
             draft = drafts[evidence.action_source_id]
@@ -496,7 +494,7 @@ def coraplex_capability_catalog(package_root: Path | None = None) -> dict:
                 {
                     **draft.to_json(),
                     "required_resources": sorted(
-                        item.value for item in evidence.required_resources
+                        item.python_type_ref for item in evidence.required_resources
                     ),
                 }
             )
@@ -522,75 +520,88 @@ def coraplex_capability_catalog(package_root: Path | None = None) -> dict:
                 == CapabilityRealizationStatus.READY.value
                 for entry in entries
             ),
-            "built_in_verification": sum(
-                entry["realization"]["effect_verification"]
-                == CapabilityVerificationStatus.BUILTIN.value
-                for entry in entries
-            ),
+            "task_verification_required": len(entries),
             "pending_review": len(pending_records),
         },
     }
 
 
-def robot_resources(robot: AbstractRobot) -> frozenset[RobotResource]:
+def robot_resources(robot: AbstractRobot) -> frozenset[SymbolType]:
     """
-    Read a robot's structural resources from its semantic annotation.
+    Every CRAM robot part type the robot's declared parts belong to.
     """
-    resources = set()
-    if robot.drive is not None:
-        resources.add(RobotResource.MOBILE_BASE)
-    if robot.get_arms():
-        resources.add(RobotResource.ARM)
-    if robot.get_end_effectors():
-        resources.add(RobotResource.END_EFFECTOR)
-    if any(isinstance(sensor, Camera) for sensor in robot.get_sensors()):
-        resources.add(RobotResource.CAMERA)
-    if robot.get_torso_if_specified() is not None:
-        resources.add(RobotResource.TORSO)
-    return frozenset(resources)
+    parts = [
+        *robot.get_arms(),
+        *robot.get_end_effectors(),
+        *robot.get_sensors(),
+    ]
+    torso = robot.get_torso_if_specified()
+    if torso is not None:
+        parts.append(torso)
+    part_types = {
+        SymbolType.from_python_type(base)
+        for part in parts
+        for base in type(part).__mro__
+        if issubclass(base, AbstractRobotPart)
+        and base.__module__.startswith(ROBOT_PARTS)
+    }
+    if isinstance(robot, HasMobileBase):
+        part_types.update(
+            SymbolType.from_python_type(base)
+            for base in type(robot.mobile_base).__mro__
+            if issubclass(base, MobileBase) and base.__module__.startswith(ROBOT_PARTS)
+        )
+    elif robot.drive is not None:
+        part_types.add(SymbolType.from_python_type(MobileBase))
+    return frozenset(part_types)
+
+
+ROBOT_PARTS = "semantic_digital_twin.robots"
+"""
+Module prefix of the CRAM robot part types resources are spelled in.
+"""
+
+
+def missing_resources(
+    available: frozenset[SymbolType], required: Iterable[SymbolType]
+) -> frozenset[SymbolType]:
+    """
+    Required part types the robot lacks.
+    """
+    return frozenset(required) - available
 
 
 def infer_coraplex_capability_support(
-    robot: AbstractRobot,
-    *,
-    ready_capability_uids: Iterable[str] = (),
-    adapter_capability_uids: Iterable[str] | None = None,
+    robot: AbstractRobot, initialization: CoraplexCapabilityInitialization
 ) -> tuple[CoraplexCapabilitySupport, ...]:
     """
-    Classify every reviewed Coraplex capability for one robot.
+    Classify every reviewed capability for one robot.
 
-    ``ready_capability_uids`` is the compatibility shorthand used by existing
-    callers. New callers should pass the reviewed adapter set explicitly.
-    Effect verification is task-dependent: selected effect predicates must
-    provide a reviewed predicate query before planning can proceed.
+    Effect verification is task-dependent: selected effect predicates must provide a
+    reviewed predicate query before planning can proceed.
     """
     available_resources = robot_resources(robot)
-    ready = frozenset(ready_capability_uids)
-    adapters = (
-        ready if adapter_capability_uids is None else frozenset(adapter_capability_uids)
-    )
+    adapters = adapter_capability_uids(initialization)
     evidence_by_capability: dict[str, list[CoraplexCapabilityRealizationEvidence]] = {}
-    for evidence in coraplex_capability_realization_evidence():
+    for evidence in realization_evidence(initialization):
         evidence_by_capability.setdefault(evidence.capability_uid, []).append(evidence)
 
     support = []
-    for contract in capability_contracts():
+    for contract in initialization.contracts:
         evidence = evidence_by_capability.get(contract.uid, [])
         compatible = [
             item
             for item in evidence
-            if item.required_resources.issubset(available_resources)
+            if not missing_resources(available_resources, item.required_resources)
         ]
         if not compatible:
             missing_sets = [
-                item.required_resources - available_resources for item in evidence
+                missing_resources(available_resources, item.required_resources)
+                for item in evidence
             ]
             missing = min(
                 missing_sets,
-                key=lambda items: (
-                    len(items),
-                    tuple(sorted(item.value for item in items)),
-                ),
+                key=lambda items: (len(items), tuple(sorted(items))),
                 default=frozenset(),
             )
             status = CapabilityRealizationStatus.ROBOT_INCOMPATIBLE
@@ -600,11 +611,7 @@ def infer_coraplex_capability_support(
         else:
             missing = frozenset()
             status = CapabilityRealizationStatus.READY
-        verification = (
-            CapabilityVerificationStatus.BUILTIN
-            if contract.uid in CORAPLEX_BUILTIN_VERIFICATION_UIDS
-            else CapabilityVerificationStatus.TASK_REQUIRED
-        )
+        verification = CapabilityVerificationStatus.TASK_REQUIRED
         support.append(
             CoraplexCapabilitySupport(
                 capability_uid=contract.uid,
@@ -616,43 +623,29 @@ def infer_coraplex_capability_support(
                 ),
                 status=status,
                 verification_status=verification,
-                missing_resources=tuple(sorted(missing, key=lambda item: item.value)),
+                missing_resources=tuple(sorted(missing)),
             )
         )
     return tuple(support)
 
 
-def coraplex_embodiment_profile(
-    *,
-    name: str,
-    robot: AbstractRobot,
-    tool_orientation,
-    ready_capability_uids: Iterable[str] = (),
-    adapter_capability_uids: Iterable[str] | None = None,
-):
+def available_coraplex_capabilities(
+    robot: AbstractRobot, initialization: CoraplexCapabilityInitialization
+) -> frozenset[str]:
     """
-    Build a profile from CRAM robot parts and reviewed realizations.
+    Reviewed capabilities the adapter can execute on the CRAM robot.
     """
-    from resym.platform.embodiment import EmbodimentProfile
-
-    support = infer_coraplex_capability_support(
-        robot,
-        ready_capability_uids=ready_capability_uids,
-        adapter_capability_uids=adapter_capability_uids,
-    )
-    return EmbodimentProfile(
-        name=name,
-        capabilities=frozenset(item.capability_uid for item in support if item.ready),
-        capability_sources=tuple(
-            (item.capability_uid, item.action_source_ids)
-            for item in support
-            if item.action_source_ids
-        ),
-        tool_orientation=tool_orientation,
+    return frozenset(
+        item.capability_uid
+        for item in infer_coraplex_capability_support(robot, initialization)
+        if item.ready
     )
 
 
-def _installed_coraplex_root() -> Path:
+def installed_coraplex_root() -> Path:
+    """
+    Root of the installed Coraplex package, or a path that exists nowhere.
+    """
     spec = importlib.util.find_spec("coraplex")
     if spec is None or not spec.submodule_search_locations:
         return Path("/__coraplex_not_installed__")

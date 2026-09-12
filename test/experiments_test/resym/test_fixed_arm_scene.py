@@ -11,25 +11,36 @@ from __future__ import annotations
 
 import pytest
 
+from experiments.resym.articulation import is_articulated_object
 from experiments.resym.scenes import Scene
 from experiments.resym.seed_library import build_seed_library
-from resym.platform.capabilities import ARTICULATION_CAPABILITY_UID
-from resym.platform.kinematic import KinematicFeasibility
-from resym.platform.embodiment import UnsupportedCapabilityError
-from resym.core.model import Literal, is_symbol_subtype
-from resym.platform.capabilities import NAVIGATION_CAPABILITY_UID
-from resym.platform.kinematic import KinematicSkillRealization
+from experiments.resym.capability_contracts import ARTICULATION_CAPABILITY_UID
+from experiments.resym.drawer_kinematic_oracle import DrawerExperimentFeasibility
+from resym.planning.pipeline import UnsupportedCapabilityError
+from resym.core.symbols import Literal
+from resym.core.symbol_types import SymbolType, is_symbol_subtype
+from experiments.resym.capability_contracts import INTERACTION_NAVIGATION_CAPABILITY_UID
+from experiments.resym.capability_realizations import default_capability_initialization
+from experiments.resym.drawer_kinematic_oracle import DrawerExperimentRealization
+from resym.platform.coraplex_catalog import available_coraplex_capabilities
 from resym.planning.pipeline import solve_task
-from resym.platform.articulation import is_articulated_object
 from resym.platform.universe import ObjectUniverse, pddl_name
 
-from resym.core.model import SymbolType
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
 
 ROBOT_TYPE = SymbolType.from_python_type(AbstractRobot)
 
 
 GOAL_DRAWER = pddl_name(Scene.APARTMENT.goal_drawer_body)
+
+
+def fixed_arm_capabilities(context) -> frozenset[str]:
+    """
+    What the reviewed realizations let the fixed arm execute.
+    """
+    return available_coraplex_capabilities(
+        context.robot, default_capability_initialization()
+    )
 
 
 def robot_name(universe: ObjectUniverse) -> str:
@@ -55,7 +66,7 @@ def test_the_arm_beside_the_furniture_reaches_the_goal_drawer(
     The reachability smoke of the table placement: from beside the furniture, `ready-to-
     open` must be provably TRUE — not merely unknown — for the goal drawer.
     """
-    verdict = KinematicFeasibility().feasible(
+    verdict = DrawerExperimentFeasibility().feasible(
         ARTICULATION_CAPABILITY_UID,
         (
             tracy_universe[robot_name(tracy_universe)],
@@ -80,7 +91,7 @@ def test_open_then_close_without_navigation(
         context=tracy_context,
         goal=(Literal("opened", (GOAL_DRAWER,)),),
         working_directory=tmp_path / "open",
-        realization=KinematicSkillRealization(),
+        realization=DrawerExperimentRealization(),
     )
     assert opened.goal_check is not None and opened.goal_check.satisfied
     assert [action.operator for action in opened.plan] == ["open-drawer"]
@@ -91,7 +102,7 @@ def test_open_then_close_without_navigation(
         context=tracy_context,
         goal=(Literal("closed", (GOAL_DRAWER,)),),
         working_directory=tmp_path / "close",
-        realization=KinematicSkillRealization(),
+        realization=DrawerExperimentRealization(),
     )
     assert closed.goal_check is not None and closed.goal_check.satisfied
     assert [action.operator for action in closed.plan] == ["close-drawer"]
@@ -112,10 +123,11 @@ def test_mobile_library_on_the_fixed_arm_is_unsupported_not_a_library_gap(
             context=tracy_context,
             goal=(Literal("opened", (GOAL_DRAWER,)),),
             working_directory=tmp_path,
+            available_capabilities=fixed_arm_capabilities(tracy_context),
         )
     missing = " ".join(error.value.missing)
     assert "openable" in missing
-    assert NAVIGATION_CAPABILITY_UID in missing
+    assert INTERACTION_NAVIGATION_CAPABILITY_UID in missing
     assert error.value.goal == (Literal("opened", (GOAL_DRAWER,)),)
 
 
@@ -135,6 +147,7 @@ def test_unsupported_capability_certificate_from_the_refusal(
             context=tracy_context,
             goal=goal,
             working_directory=tmp_path,
+            available_capabilities=fixed_arm_capabilities(tracy_context),
         )
     certificate = certify_unsupported_capability(
         goal,

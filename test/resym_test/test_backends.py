@@ -21,19 +21,16 @@ from resym.repair.backends import (
     RagOneShotBackend,
     RepairTask,
 )
-from resym.knowledge.corpus import load_fragment
-from resym.knowledge.retrieval import FragmentIndex
+from resym.retrieval.corpus import load_fragment
+from resym.retrieval.index import FragmentIndex
 from resym.llm.client import ScriptedCompletionClient
 from resym.llm.structured import StructuredCompleter
 from resym.llm.transcript import TranscriptRecorder
-from resym.core.model import (
-    PredicateSymbol,
-    SymbolLibrary,
-)
+from resym.core.symbols import PredicateSymbol, SymbolLibrary
+from resym.core.symbol_types import SymbolType
 from .capability_helpers import capability_contract
 from .grounding_helpers import STUB_GROUNDING_PLAN
 
-from resym.core.model import SymbolType
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Drawer
 
 DRAWER_TYPE = SymbolType.from_python_type(Drawer)
@@ -268,7 +265,7 @@ def test_enumeration_synthesizes_the_close_operator_llm_free():
     meter = BudgetMeter(budget=Budget(candidates=50, tool_calls=100))
     outcome = EnumerationBackend().repair(task, meter)
     assert outcome.status is OutcomeStatus.PATCH_PROPOSED
-    from resym.core.model import Literal
+    from resym.core.symbols import Literal
 
     (operator,) = outcome.patch.operators
     assert operator.add_effects == (Literal("closed", ("v0",)),)

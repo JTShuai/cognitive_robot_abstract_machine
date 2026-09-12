@@ -4,23 +4,23 @@ Task model constructed from the reviewed platform catalogs for experiments.
 
 from __future__ import annotations
 
-from resym.core.model import (
+from resym.core.capability_model import (
     CapabilityRef,
-    Literal,
-    Operator,
     OperatorExecutionBinding,
-    PredicateGroundingPlan,
-    PredicateSymbol,
     RoleBinding,
-    SymbolLibrary,
 )
+from resym.core.grounding_model import PredicateGroundingPlan
+from resym.core.symbols import Literal, Operator, PredicateSymbol, SymbolLibrary
+from resym.core.symbol_types import SymbolType
 from resym.platform.feasibility import feasibility_factory_uid
 from resym.platform.grounding_catalog import GroundingFactoryCatalog
-from resym.platform.capabilities import (
+from experiments.resym.capability_contracts import (
     ARTICULATION_CAPABILITY_UID,
-    NAVIGATION_CAPABILITY_UID,
-    articulation_capability_contract,
-    navigation_capability_contract,
+    INTERACTION_NAVIGATION_CAPABILITY_UID,
+)
+from experiments.resym.capability_initialization import (
+    contracts_by_uid,
+    default_capability_contracts,
 )
 
 from experiments.resym.grounding_initialization import (
@@ -28,7 +28,6 @@ from experiments.resym.grounding_initialization import (
     JOINT_FRACTION_OPENED_UID,
 )
 
-from resym.core.model import SymbolType
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     Drawer,
@@ -81,7 +80,7 @@ def build_seed_library(catalog: GroundingFactoryCatalog) -> SymbolLibrary:
     )
     library.add(
         PredicateSymbol(
-            name="ready-to-open",
+            name="ready-to-interact",
             parameter_types=(ROBOT_TYPE, DRAWER_TYPE),
             fluent=True,
             grounding_plan=build_grounding_plan(
@@ -98,7 +97,7 @@ def build_seed_library(catalog: GroundingFactoryCatalog) -> SymbolLibrary:
             fluent=False,
             grounding_plan=build_grounding_plan(
                 catalog,
-                feasibility_factory_uid(NAVIGATION_CAPABILITY_UID),
+                feasibility_factory_uid(INTERACTION_NAVIGATION_CAPABILITY_UID),
                 (("actor", 0), ("patient", 1)),
             ),
         )
@@ -108,7 +107,7 @@ def build_seed_library(catalog: GroundingFactoryCatalog) -> SymbolLibrary:
             name="navigate",
             parameters=(("r", ROBOT_TYPE), ("d", DRAWER_TYPE)),
             preconditions=(Literal("openable", ("r", "d")),),
-            add_effects=(Literal("ready-to-open", ("r", "d")),),
+            add_effects=(Literal("ready-to-interact", ("r", "d")),),
             delete_effects=(),
             execution_binding=_navigation_binding(),
         )
@@ -122,7 +121,7 @@ def build_seed_library(catalog: GroundingFactoryCatalog) -> SymbolLibrary:
                 ("d", DRAWER_TYPE),
             ),
             preconditions=(
-                Literal("ready-to-open", ("r", "d")),
+                Literal("ready-to-interact", ("r", "d")),
                 Literal("handle-of", ("h", "d")),
                 Literal("closed", ("d",)),
             ),
@@ -131,16 +130,17 @@ def build_seed_library(catalog: GroundingFactoryCatalog) -> SymbolLibrary:
             execution_binding=_articulation_binding("OPEN"),
         )
     )
-    library.add_capability_contract(navigation_capability_contract())
-    library.add_capability_contract(articulation_capability_contract())
+    contracts = contracts_by_uid(default_capability_contracts())
+    library.add_capability_contract(contracts[INTERACTION_NAVIGATION_CAPABILITY_UID])
+    library.add_capability_contract(contracts[ARTICULATION_CAPABILITY_UID])
     return library
 
 
 def build_fixed_arm_library(catalog: GroundingFactoryCatalog) -> SymbolLibrary:
     """
     The correct library of the fixed-arm embodiment: no navigation and no witness-pose
-    predicate — reachability from the mount is a grounding fact (``ready-to-open``), not
-    something an action achieves.
+    predicate — reachability from the mount is a grounding fact (``ready-to-interact``),
+    not something an action achieves.
 
     Both manipulation directions are modeled; the P2 fault templates delete or distort
     pieces of this library to create repair tasks with known ground truth.
@@ -176,7 +176,7 @@ def build_fixed_arm_library(catalog: GroundingFactoryCatalog) -> SymbolLibrary:
     )
     library.add(
         PredicateSymbol(
-            name="ready-to-open",
+            name="ready-to-interact",
             parameter_types=(ROBOT_TYPE, DRAWER_TYPE),
             fluent=True,
             grounding_plan=build_grounding_plan(
@@ -195,7 +195,7 @@ def build_fixed_arm_library(catalog: GroundingFactoryCatalog) -> SymbolLibrary:
                 ("d", DRAWER_TYPE),
             ),
             preconditions=(
-                Literal("ready-to-open", ("r", "d")),
+                Literal("ready-to-interact", ("r", "d")),
                 Literal("handle-of", ("h", "d")),
                 Literal("closed", ("d",)),
             ),
@@ -213,7 +213,7 @@ def build_fixed_arm_library(catalog: GroundingFactoryCatalog) -> SymbolLibrary:
                 ("d", DRAWER_TYPE),
             ),
             preconditions=(
-                Literal("ready-to-open", ("r", "d")),
+                Literal("ready-to-interact", ("r", "d")),
                 Literal("handle-of", ("h", "d")),
                 Literal("opened", ("d",)),
             ),
@@ -222,13 +222,15 @@ def build_fixed_arm_library(catalog: GroundingFactoryCatalog) -> SymbolLibrary:
             execution_binding=_articulation_binding("CLOSED"),
         )
     )
-    library.add_capability_contract(articulation_capability_contract())
+    library.add_capability_contract(
+        contracts_by_uid(default_capability_contracts())[ARTICULATION_CAPABILITY_UID]
+    )
     return library
 
 
 def _navigation_binding() -> OperatorExecutionBinding:
     return OperatorExecutionBinding(
-        CapabilityRef(NAVIGATION_CAPABILITY_UID),
+        CapabilityRef(INTERACTION_NAVIGATION_CAPABILITY_UID),
         (
             ("actor", RoleBinding.parameter("r")),
             ("patient", RoleBinding.parameter("d")),

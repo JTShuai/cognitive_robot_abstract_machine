@@ -5,7 +5,7 @@ The pipeline and the visualization observe the same execution. Structured events
 written under ``runs/`` for the live web viewer; there is no post-execution animation or
 operator-name-based replay.
 
-Run through ``scripts/run_viz_demo.sh [apartment|kitchen] [local|web]``.
+Run through ``experiments/scripts/run_viz_demo.sh [apartment|kitchen] [local|web]``.
 """
 
 from __future__ import annotations
@@ -26,10 +26,11 @@ from typing_extensions import Any
 
 from experiments.resym.scenes import Scene, load_scene
 from experiments.resym.seed_library import build_seed_library
-from resym.core.model import Literal
+from resym.core.symbols import Literal
 from resym.observability.runlog import RunRecorder
+from experiments.resym.capability_realizations import default_capability_initialization
 from experiments.resym.grounding_initialization import default_drawer_grounding_catalog
-from resym.platform.kinematic import KinematicFeasibility
+from experiments.resym.drawer_kinematic_oracle import DrawerExperimentFeasibility
 from resym.platform.grounding_context import EvaluationContext
 from resym.platform.universe import pddl_name
 from resym.platform.cram_objects import task_object_universe
@@ -374,9 +375,8 @@ def main() -> None:
     context = EvaluationContext(
         world=setup.world,
         robot=setup.robot,
-        profile=setup.profile,
         grounding_catalog=default_drawer_grounding_catalog(),
-        capability_feasibility=KinematicFeasibility(),
+        capability_feasibility=DrawerExperimentFeasibility(),
     )
     goal = (Literal("opened", (pddl_name(scene.goal_drawer_body),)),)
     recorder.record_world(universe, scene=scene.value)
@@ -385,6 +385,7 @@ def main() -> None:
 
     realization = CoraplexSkillRealization.for_evaluation_context(
         context,
+        default_capability_initialization(),
         event_sink=visualization,
     )
     try:

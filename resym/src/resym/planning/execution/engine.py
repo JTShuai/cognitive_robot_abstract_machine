@@ -18,18 +18,15 @@ from enum import Enum
 from typing_extensions import Optional
 
 from krrood.adapters.json_serializer import to_json
-from resym.core.grounding import GroundingFailure
-from resym.platform.grounding_context import EvaluationContext
-from resym.planning.grounding import evaluate_predicate
-from resym.core.model import (
+from resym.core.capability_model import (
     CapabilityContract,
     ExecutionRequest,
-    Literal,
-    Operator,
-    PredicateSymbol,
-    SymbolLibrary,
     contract_violations,
 )
+from resym.core.grounding_model import GroundingFailure
+from resym.core.symbols import Literal, Operator, PredicateSymbol, SymbolLibrary
+from resym.platform.grounding_context import EvaluationContext
+from resym.planning.state_evaluation import evaluate_predicate
 from resym.planning.pddl import GroundAction
 from resym.planning.events import (
     PipelineEvent,
@@ -39,6 +36,7 @@ from resym.planning.events import (
     literal_payload,
 )
 from resym.platform.universe import ObjectUniverse
+from semantic_digital_twin.robots.robot_parts import AbstractRobot
 
 
 class ExecutionViolation(Enum):
@@ -127,8 +125,8 @@ class MissingWitnessPoseError(Exception):
 
     def __init__(self, request: ExecutionRequest):
         super().__init__(
-            f"No witness base pose recorded for {request}; "
-            "grounding must run 'openable' first."
+            f"No witness base pose was recorded for {request}; the selected "
+            "operator must establish one through its grounding procedure."
         )
 
 
@@ -137,16 +135,6 @@ class UnknownCapabilityError(Exception):
 
     def __init__(self, capability_uid: str):
         super().__init__(f"No realization registered for '{capability_uid}'.")
-
-
-class UnsupportedCapabilityRealizationError(Exception):
-    """A realization exists, but the current embodiment does not provide it."""
-
-    def __init__(self, capability_uid: str, profile_name: str):
-        super().__init__(
-            f"Capability '{capability_uid}' is not provided by embodiment "
-            f"'{profile_name}'."
-        )
 
 
 class PlatformSkillRealization(ABC):
@@ -160,6 +148,10 @@ class PlatformSkillRealization(ABC):
         universe: ObjectUniverse,
     ) -> PlatformExecutionResult:
         """Execute the request and return a structured platform outcome."""
+
+    @abstractmethod
+    def available_capabilities(self, robot: AbstractRobot) -> frozenset[str]:
+        """Capabilities this realization can execute on the given robot."""
 
 
 def execution_request_for(
