@@ -57,7 +57,7 @@ from resym.platform.capabilities import (
     WIPING_CAPABILITY_UID,
     OpenCloseState,
 )
-from resym.platform.evaluators import EvaluationContext
+from resym.platform.grounding_context import EvaluationContext
 from resym.platform.articulation import interaction_point_body
 from resym.platform.universe import ObjectUniverse
 from resym.planning.events import PipelineEvent, PipelineEventSink, emit_event
@@ -118,7 +118,7 @@ class CoraplexSkillRealization(PlatformSkillRealization):
         event_sink: PipelineEventSink | None = None,
     ) -> CoraplexSkillRealization:
         """
-        Build the backend on the same world and robot evaluators observe.
+        Build the backend on the same world and robot the grounding queries observe.
         """
         return cls(
             plan_context=Context(world=context.world, robot=context.robot),

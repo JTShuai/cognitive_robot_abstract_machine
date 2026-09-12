@@ -6,10 +6,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from typing_extensions import Self
-
 PREDICATE_NAMESPACE = "resym:predicate/"
-TRUTH_PROCEDURE_NAMESPACE = "resym:truth-procedure/"
+TRUTH_PROCEDURE_NAMESPACE = "resym:truth-procedure/query/"
 
 
 @dataclass(frozen=True)
@@ -34,36 +32,15 @@ class PredicateRef:
 @dataclass(frozen=True)
 class TruthProcedureRef:
     """
-    Versioned identity of reviewed executable predicate semantics.
+    Versioned identity of a reviewed predicate-grounding plan.
     """
 
     uid: str
     version: str = "1"
 
     @classmethod
-    def registered(cls, evaluator: str, version: str = "1") -> TruthProcedureRef:
-        return cls(f"{TRUTH_PROCEDURE_NAMESPACE}registry/{evaluator}", version)
-
-    @classmethod
     def query(cls, predicate_name: str, version: str = "1") -> TruthProcedureRef:
         """
         Identity of the reviewed query plan owned by the named predicate.
         """
-        return cls(f"{TRUTH_PROCEDURE_NAMESPACE}query/{predicate_name}", version)
-
-
-@dataclass(frozen=True)
-class PredicateImplementation:
-    """
-    One reviewed platform query behind a predicate symbol.
-    """
-
-    ref: TruthProcedureRef
-    evaluator_key: str
-
-    @classmethod
-    def registered(cls, evaluator_key: str) -> Self:
-        return cls(
-            ref=TruthProcedureRef.registered(evaluator_key),
-            evaluator_key=evaluator_key,
-        )
+        return cls(f"{TRUTH_PROCEDURE_NAMESPACE}{predicate_name}", version)

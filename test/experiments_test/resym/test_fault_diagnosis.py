@@ -32,7 +32,7 @@ REPRESENTATIVE = (
     "wrong-parameter-type",  # deterministic signature validation
     "execution-binding-mismatch",  # caught by the postcondition check
     "unsupported-navigation-library",  # static refusal at the capability gate
-    "broken-evaluator-binding",  # repairable local evaluator-key mismatch
+    "broken-grounding-binding",  # repairable local grounding-factory mismatch
     "missing-delete-effect",  # latent: the probe task succeeds
 )
 
@@ -48,10 +48,12 @@ def set_drawer_fraction(setup, universe, name: str, fraction: float) -> None:
 
 
 def test_representative_templates_diagnose_as_expected(
-    tracy_setup, tracy_universe, tracy_context, tmp_path
+    tracy_setup, tracy_universe, tracy_context, tmp_path, grounding_catalog, library
 ):
-    correct = build_fixed_arm_library()
-    by_id = {t.identifier: t for t in drawer_fault_templates(correct)}
+    correct = build_fixed_arm_library(grounding_catalog)
+    by_id = {
+        t.identifier: t for t in drawer_fault_templates(correct, grounding_catalog)
+    }
     observations = []
     for identifier in REPRESENTATIVE:
         template = by_id[identifier]
@@ -99,7 +101,7 @@ def test_representative_templates_diagnose_as_expected(
     assert "wrong-parameter-type" in curation_observed
     assert "execution-binding-mismatch" not in curation_observed
     assert "unsupported-navigation-library" not in curation_observed
-    assert "broken-evaluator-binding" in curation_observed
+    assert "broken-grounding-binding" in curation_observed
 
 
 def test_diagnosis_restores_a_clean_world(tracy_setup, tracy_universe):

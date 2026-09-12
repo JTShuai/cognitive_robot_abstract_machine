@@ -405,8 +405,8 @@ ZH_PHRASES: dict[str, str] = {
     "models drawer opening the mobile-robot way on a fixed arm": (
         "在固定机械臂上按移动机器人的方式建模开抽屉"
     ),
-    "'opened' references an evaluator no embodiment registers": (
-        "‘opened’ 引用了任何平台都未注册的求值器"
+    "'opened' references a grounding factory no reviewed catalog provides": (
+        "‘opened’ 引用了审核目录中不存在的接地工厂"
     ),
     "no close operator, and open-drawer also forgets to un-close": (
         "没有关抽屉算子，且 open-drawer 也忘了取消 ‘closed’"

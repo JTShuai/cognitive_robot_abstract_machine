@@ -118,7 +118,6 @@ def mobile_profile(robot: AbstractRobot) -> EmbodimentProfile:
     """
     Derive the PR2 capability surface from its CRAM robot annotation.
     """
-    from resym.platform.evaluators import EVALUATORS
     from resym.platform.coraplex_catalog import (
         CORAPLEX_ADAPTER_CAPABILITY_UIDS,
         coraplex_embodiment_profile,
@@ -127,7 +126,6 @@ def mobile_profile(robot: AbstractRobot) -> EmbodimentProfile:
     return coraplex_embodiment_profile(
         name="pr2-mobile",
         robot=robot,
-        evaluators=frozenset(EVALUATORS),
         adapter_capability_uids=CORAPLEX_ADAPTER_CAPABILITY_UIDS,
         tool_orientation=ToolOrientation.BASE_ALIGNED,
     )
@@ -139,7 +137,6 @@ def fixed_arm_profile(robot: AbstractRobot) -> EmbodimentProfile:
     navigation skill — asking for either is an unsupported capability, not a library
     gap.
     """
-    from resym.platform.evaluators import EVALUATORS
     from resym.platform.coraplex_catalog import (
         CORAPLEX_ADAPTER_CAPABILITY_UIDS,
         coraplex_embodiment_profile,
@@ -148,7 +145,6 @@ def fixed_arm_profile(robot: AbstractRobot) -> EmbodimentProfile:
     return coraplex_embodiment_profile(
         name="tracy-fixed",
         robot=robot,
-        evaluators=frozenset(EVALUATORS) - {"openable"},
         adapter_capability_uids=CORAPLEX_ADAPTER_CAPABILITY_UIDS,
         tool_orientation=ToolOrientation.APPROACH_ALIGNED,
     )

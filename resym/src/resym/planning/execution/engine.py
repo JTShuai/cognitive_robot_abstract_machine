@@ -19,7 +19,7 @@ from typing_extensions import Optional
 
 from krrood.adapters.json_serializer import to_json
 from resym.core.grounding import GroundingFailure
-from resym.platform.evaluators import EvaluationContext
+from resym.platform.grounding_context import EvaluationContext
 from resym.planning.grounding import evaluate_predicate
 from resym.core.model import (
     CapabilityContract,

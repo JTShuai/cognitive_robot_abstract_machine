@@ -203,7 +203,7 @@ class FailureCertificate:
                 f"violated literal: {_render_literals((self.violated_literal,))}"
             )
         if self.violation_reason:
-            lines.append(f"evaluator reason: {self.violation_reason}")
+            lines.append(f"grounding reason: {self.violation_reason}")
         if self.grounding_failure_code:
             lines.append(f"grounding failure: {self.grounding_failure_code}")
         if self.platform_failure_code:
@@ -602,16 +602,16 @@ def certify_unsupported_capability(
     )
 
 
-def certify_evaluator_binding_error(
+def certify_grounding_factory_binding_error(
     goal: tuple[Literal, ...],
     selection: Selection,
     missing: str,
     **metadata,
 ) -> FailureCertificate:
-    """A predicate points at an evaluator absent from this embodiment.
+    """A predicate points at an unavailable grounding factory.
 
-    The binding is repairable when another registered evaluator implements
-    the predicate.  If none does, the agent may select the explicitly allowed
+    The binding is repairable when another reviewed factory implements the
+    predicate. If none does, the agent may select the explicitly allowed
     unsupported-capability alternative.
     """
     return FailureCertificate(

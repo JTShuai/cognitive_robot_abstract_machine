@@ -197,9 +197,6 @@ class RepairTask:
 
     certificate: FailureCertificate
     library: SymbolLibrary
-    evaluator_listing: str
-    """Menu of registered truth procedures, one per line."""
-
     capability_listing: str
     """Menu of available capability contracts, one per line."""
 
@@ -365,12 +362,7 @@ def render_proposal_prompt(task: RepairTask, retrieved: str = "") -> str:
         request=task.certificate.render(),
         predicates=render_predicates(task.library, mark_fluents=True),
         operators=render_operators(task.library),
-        evaluators=task.evaluator_listing,
-        predicate_queries=(
-            task.grounding_factory_listing
-            or task.evaluator_listing
-            or "- none registered"
-        ),
+        predicate_queries=task.grounding_factory_listing or "- none registered",
         skills=task.capability_listing,
         capability_candidates=task.capability_draft_listing or "- none",
         types=", ".join(t.python_type_ref for t in task.library.symbol_types),

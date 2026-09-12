@@ -109,8 +109,8 @@ class DomainFragment:
     """
     One atomic domain, normalized: the unit of retrieval.
 
-    Untrusted by definition — it carries no evaluator, no capability binding, and no
-    execution guarantee.
+    Untrusted by definition — it carries no grounding plan, no capability binding, and
+    no execution guarantee.
     """
 
     fragment_id: str

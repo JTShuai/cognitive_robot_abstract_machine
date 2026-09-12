@@ -33,7 +33,7 @@ from resym.platform.articulation import (
     articulation_connection,
     is_articulated_object,
 )
-from resym.platform.evaluators import EvaluationContext
+from resym.platform.grounding_context import EvaluationContext
 from resym.planning.execution.engine import (
     PlatformExecutionResult,
     PlatformExecutionStatus,

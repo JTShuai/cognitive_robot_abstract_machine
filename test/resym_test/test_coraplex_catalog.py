@@ -159,7 +159,6 @@ def test_profile_admits_only_ready_capabilities_and_keeps_their_sources():
     profile = coraplex_embodiment_profile(
         name="test-robot",
         robot=Robot(mobile=True),
-        evaluators={"opened"},
         ready_capability_uids={ARTICULATION_CAPABILITY_UID},
         tool_orientation=ToolOrientation.BASE_ALIGNED,
     )

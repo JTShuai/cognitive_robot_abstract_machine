@@ -4,9 +4,13 @@ Reviewed predicate-grounding records and their structured runtime failures.
 
 from __future__ import annotations
 
+import hashlib
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from resym.core.provenance import Provenance
 
 if TYPE_CHECKING:
     from resym.core.symbols import Literal
@@ -14,10 +18,18 @@ if TYPE_CHECKING:
 
 
 type GroundingParameterValue = str | int | float | bool
-GROUNDING_PLAN_EVALUATOR_KEY = "grounding-plan"
-"""
-Compatibility key stored where legacy predicates carry an evaluator name.
-"""
+
+GroundingFactoryProcedure = Callable[
+    [Any, Any, tuple[Any, ...], Mapping[str, object]], bool
+]
+
+
+def text_checksum(text: str) -> str:
+    """
+    Stable content hash used to pin reviewed grounding sources.
+    """
+    return hashlib.sha256(text.encode()).hexdigest()
+
 
 # %% Grounding factories and plans
 
@@ -285,12 +297,23 @@ class GroundingFactorySpec:
     Compatible profiles; empty means platform-independent.
     """
 
+    dependency_checksums: tuple[tuple[str, str], ...] = ()
+    """
+    Imported reviewed vocabulary symbols and the source checksums approved with
+    this implementation.
+    """
+
     def __post_init__(self) -> None:
         object.__setattr__(self, "roles", tuple(self.roles))
         object.__setattr__(self, "parameters", tuple(self.parameters))
         object.__setattr__(self, "origin", GroundingFactoryOrigin(self.origin))
         object.__setattr__(
             self, "supported_embodiments", tuple(self.supported_embodiments)
+        )
+        object.__setattr__(
+            self,
+            "dependency_checksums",
+            tuple(tuple(item) for item in self.dependency_checksums),
         )
 
 
@@ -324,6 +347,9 @@ class PredicateGroundingPlan:
     """
     Whether the Boolean factory result is complemented.
     """
+
+    provenance: Provenance = Provenance()
+    """Who proposed and approved this predicate-to-factory binding."""
 
     version: str = "1"
     """

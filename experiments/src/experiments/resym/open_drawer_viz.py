@@ -28,7 +28,9 @@ from experiments.resym.scenes import Scene, load_scene
 from experiments.resym.seed_library import build_seed_library
 from resym.core.model import Literal
 from resym.observability.runlog import RunRecorder
-from resym.platform.evaluators import EvaluationContext
+from experiments.resym.grounding_initialization import default_drawer_grounding_catalog
+from resym.platform.kinematic import KinematicFeasibility
+from resym.platform.grounding_context import EvaluationContext
 from resym.platform.universe import pddl_name
 from resym.platform.cram_objects import task_object_universe
 from resym.planning.events import PipelineEvent, PipelineEventSink
@@ -373,10 +375,12 @@ def main() -> None:
         world=setup.world,
         robot=setup.robot,
         profile=setup.profile,
+        grounding_catalog=default_drawer_grounding_catalog(),
+        capability_feasibility=KinematicFeasibility(),
     )
     goal = (Literal("opened", (pddl_name(scene.goal_drawer_body),)),)
     recorder.record_world(universe, scene=scene.value)
-    library = build_seed_library()
+    library = build_seed_library(default_drawer_grounding_catalog())
     recorder.record_library(library)
 
     realization = CoraplexSkillRealization.for_evaluation_context(

@@ -30,13 +30,13 @@ from resym.planning.selection import select_for_goal
 
 
 @pytest.fixture(scope="module")
-def correct():
-    return build_fixed_arm_library()
+def correct(grounding_catalog):
+    return build_fixed_arm_library(grounding_catalog)
 
 
 @pytest.fixture(scope="module")
-def templates(correct):
-    return drawer_fault_templates(correct)
+def templates(correct, grounding_catalog):
+    return drawer_fault_templates(correct, grounding_catalog)
 
 
 def test_template_set_size_and_groups(templates):
@@ -54,7 +54,7 @@ def test_transforms_are_pure_and_actually_change_the_library(correct, templates)
         assert faulted.to_json() != reference, template.identifier
 
 
-def test_every_repair_restores_the_probe_capability(correct, templates):
+def test_every_repair_restores_the_probe_capability(correct, templates, library):
     """
     Applying the ground-truth patch to the faulted library must make the probe goal
     selectable again with an achiever — the reference repair is a real repair, not a
@@ -91,9 +91,9 @@ def test_unsupported_templates_have_no_repair(templates):
         )
 
 
-def test_broken_evaluator_binding_is_a_repairable_model_error(templates):
+def test_broken_grounding_binding_is_a_repairable_model_error(templates):
     template = next(
-        item for item in templates if item.identifier == "broken-evaluator-binding"
+        item for item in templates if item.identifier == "broken-grounding-binding"
     )
 
     assert template.ground_truth.repair is not None
@@ -272,7 +272,7 @@ def test_diagnosis_scoring_counts_expected_sets_and_confusion(templates):
     assert "diagnosis accuracy: 3/5" in report.render()
 
 
-def test_templates_reject_a_drifted_library(correct):
+def test_templates_reject_a_drifted_library(correct, grounding_catalog):
     from experiments.resym.icra.articulation.faults import UnknownTemplateSymbolError
 
     import copy
@@ -280,4 +280,4 @@ def test_templates_reject_a_drifted_library(correct):
     drifted = copy.deepcopy(correct)
     del drifted.operators["close-drawer"]
     with pytest.raises(UnknownTemplateSymbolError):
-        drawer_fault_templates(drifted)
+        drawer_fault_templates(drifted, grounding_catalog)

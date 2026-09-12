@@ -1,8 +1,7 @@
 """What a concrete robot platform can actually do.
 
 An :class:`EmbodimentProfile` declares the capability surface of one
-embodiment: which truth procedures (evaluators) it implements, which
-capabilities it can realize, and how its tool approaches a manipulation
+embodiment: which capabilities it can realize and how its tool approaches a manipulation
 target. The pipeline checks every selected symbol against the profile
 *before* grounding or planning; a goal whose causal closure needs a
 capability the platform lacks is an ``UNSUPPORTED_CAPABILITY`` failure,
@@ -10,7 +9,7 @@ not a library gap — no amount of model repair can add a motor.
 
 Whether an embodiment is mobile is a fact of the robot description, not
 of the profile: runtime code reads the drive off the robot
-(``robot.drive``). A fixed arm simply lacks the witness-pose evaluator
+(``robot.drive``). A fixed arm simply lacks the witness-pose grounding factory
 and the navigation realization in its capability set.
 
 This module is deliberately platform-free: profiles are declarative
@@ -57,9 +56,6 @@ class EmbodimentProfile:
     name: str
     """Identifier recorded in certificates and admission metadata."""
 
-    evaluators: frozenset[str]
-    """Predicate truth procedures this embodiment implements."""
-
     capabilities: frozenset[str]
     """Stable capability UIDs this embodiment can realize."""
 
@@ -69,34 +65,20 @@ class EmbodimentProfile:
     tool_orientation: ToolOrientation = ToolOrientation.BASE_ALIGNED
     """How reachability targets orient the tool frame."""
 
-    def missing_evaluators(
+    def missing_grounding_factories(
         self,
         selection,
-        grounding_catalog: GroundingFactoryCatalog | None = None,
+        grounding_catalog: GroundingFactoryCatalog,
     ) -> tuple[str, ...]:
-        """Evaluator bindings used by the selection but absent here."""
+        """Grounding factories used by the selection but absent here."""
         missing = []
         for predicate in selection.predicates.values():
             plan = predicate.grounding_plan
-            if plan is not None:
-                if grounding_catalog is None:
-                    missing.append(
-                        f"predicate '{predicate.name}' needs grounding factory "
-                        f"'{plan.factory_uid}', but no catalog is loaded"
-                    )
-                elif not grounding_catalog.supports(plan.factory_uid, self.name):
-                    missing.append(
-                        f"predicate '{predicate.name}' needs grounding factory "
-                        f"'{plan.factory_uid}', which embodiment '{self.name}' "
-                        "does not implement"
-                    )
-                continue
-            implementation = predicate.implementation
-            if implementation.evaluator_key not in self.evaluators:
+            if not grounding_catalog.supports(plan.factory_uid, self.name):
                 missing.append(
-                    f"predicate '{predicate.name}' needs evaluator "
-                    f"'{implementation.evaluator_key}', which embodiment "
-                    f"'{self.name}' does not implement"
+                    f"predicate '{predicate.name}' needs grounding factory "
+                    f"'{plan.factory_uid}', which embodiment '{self.name}' "
+                    "does not implement"
                 )
         return tuple(missing)
 
@@ -114,16 +96,16 @@ class EmbodimentProfile:
         return tuple(missing)
 
 
-class InvalidEvaluatorBindingError(Exception):
-    """A selected predicate names an evaluator absent from the embodiment.
+class InvalidGroundingFactoryBindingError(Exception):
+    """A selected predicate names a grounding factory absent from the embodiment.
 
     This is first treated as a repairable model binding error.  The repair
-    agent may still conclude that the evaluator is genuinely unavailable and
+    agent may still conclude that the factory is genuinely unavailable and
     choose the certificate's unsupported-capability alternative.
     """
 
     def __init__(self, missing: tuple[str, ...], goal: tuple = (), selection=None):
-        super().__init__("Invalid evaluator binding: " + "; ".join(missing))
+        super().__init__("Invalid grounding factory binding: " + "; ".join(missing))
         self.missing = missing
         self.goal = goal
         self.selection = selection

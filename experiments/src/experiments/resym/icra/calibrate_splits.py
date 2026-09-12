@@ -17,6 +17,7 @@ from experiments.resym.icra.articulation.faults import (
 from experiments.resym.icra.articulation.tracy_bench import TracyBench
 from experiments.resym.icra.run import PROJECT_ROOT, select_templates
 from resym.platform.cram_objects import task_object_universe
+from experiments.resym.grounding_initialization import default_drawer_grounding_catalog
 
 
 def main() -> None:
@@ -61,7 +62,7 @@ def main() -> None:
         manifest = calibrate_splits(
             templates,
             feasible,
-            build_fixed_arm_library(),
+            build_fixed_arm_library(default_drawer_grounding_catalog()),
             variations_per_template=args.variations_per_template,
             seed=args.seed,
             maximum_candidates_per_template=args.maximum_candidates_per_template,

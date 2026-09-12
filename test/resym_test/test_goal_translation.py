@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from .library_fixtures import build_seed_library
+from .grounding_helpers import STUB_GROUNDING_PLAN
 from resym.interfaces.goal_translation import (
     GoalTranslator,
     TaskUnderstandingStatus,
@@ -130,16 +130,16 @@ def query_goal_json(reference: str = "$target", **filters: str) -> str:
 
 
 class TestGoalTranslation:
-    def test_eql_object_query_resolves_a_property_description(self):
+    def test_eql_object_query_resolves_a_property_description(self, library):
         universe = ObjectUniverse()
         universe.add(cup("red-cup"))
         universe.add(cup("blue-cup"))
-        library = build_seed_library()
+        library = library
         library.add(
             PredicateSymbol(
                 name="selected",
                 parameter_types=(SymbolType.from_python_type(Cup),),
-                evaluator="test-only",
+                grounding_plan=STUB_GROUNDING_PLAN,
                 fluent=False,
             )
         )
@@ -150,16 +150,16 @@ class TestGoalTranslation:
 
         assert goal[0].arguments == ("red-cup",)
 
-    def test_color_query_classifies_asset_colors_to_the_nearest_name(self):
+    def test_color_query_classifies_asset_colors_to_the_nearest_name(self, library):
         universe = ObjectUniverse()
         universe.add(cup("cup-one", Color(0.9, 0.05, 0.1)))
         universe.add(cup("cup-two", Color.BLUE()))
-        library = build_seed_library()
+        library = library
         library.add(
             PredicateSymbol(
                 name="selected",
                 parameter_types=(SymbolType.from_python_type(Cup),),
-                evaluator="test-only",
+                grounding_plan=STUB_GROUNDING_PLAN,
                 fluent=False,
             )
         )
@@ -170,16 +170,18 @@ class TestGoalTranslation:
 
         assert goal[0].arguments == ("cup-one",)
 
-    def test_ambiguous_eql_object_query_requests_a_revised_interpretation(self):
+    def test_ambiguous_eql_object_query_requests_a_revised_interpretation(
+        self, library
+    ):
         universe = ObjectUniverse()
         universe.add(cup("red-cup-one"))
         universe.add(cup("red-cup-two"))
-        library = build_seed_library()
+        library = library
         library.add(
             PredicateSymbol(
                 name="selected",
                 parameter_types=(SymbolType.from_python_type(Cup),),
-                evaluator="test-only",
+                grounding_plan=STUB_GROUNDING_PLAN,
                 fluent=False,
             )
         )
@@ -201,45 +203,41 @@ class TestGoalTranslation:
         assert understanding.status is TaskUnderstandingStatus.CLARIFICATION_NEEDED
         assert "red-cup-one" in translator.completer.client.received_prompts[1]
 
-    def test_valid_goal_passes(self, miniature_universe):
+    def test_valid_goal_passes(self, miniature_universe, library):
         translator = translator_with(goal_json("opened", "cabinet10-drawer-top"))
         goal = translator.translate(
             "open the top drawer of cabinet 10",
-            build_seed_library(),
+            library,
             miniature_universe,
         )
         assert goal[0].predicate == "opened"
         assert goal[0].arguments == ("cabinet10-drawer-top",)
 
-    def test_semantic_error_is_repaired(self, miniature_universe):
+    def test_semantic_error_is_repaired(self, miniature_universe, library):
         translator = translator_with(
             goal_json("opened", "no-such-drawer"),
             goal_json("opened", "cabinet10-drawer-top"),
         )
-        goal = translator.translate(
-            "open the drawer", build_seed_library(), miniature_universe
-        )
+        goal = translator.translate("open the drawer", library, miniature_universe)
         assert goal[0].arguments == ("cabinet10-drawer-top",)
         client = translator.completer.client
         assert "no-such-drawer" in client.received_prompts[1]
 
-    def test_wrong_argument_type_is_reported(self, miniature_universe):
+    def test_wrong_argument_type_is_reported(self, miniature_universe, library):
         translator = translator_with(
             goal_json("opened", "handle-cab10-t"),
             goal_json("opened", "cabinet10-drawer-top"),
         )
-        goal = translator.translate("open it", build_seed_library(), miniature_universe)
+        goal = translator.translate("open it", library, miniature_universe)
         assert goal[0].arguments == ("cabinet10-drawer-top",)
 
-    def test_unrepairable_goal_raises(self, miniature_universe):
+    def test_unrepairable_goal_raises(self, miniature_universe, library):
         translator = translator_with(*[goal_json("polish", "cabinet10-drawer-top")] * 3)
         with pytest.raises(UntranslatableGoalError):
-            translator.translate(
-                "polish the drawer", build_seed_library(), miniature_universe
-            )
+            translator.translate("polish the drawer", library, miniature_universe)
 
     def test_clear_missing_relation_becomes_curation_certificate(
-        self, miniature_universe, tmp_path
+        self, miniature_universe, tmp_path, library
     ):
         translator = translator_with(
             model_gap_json(
@@ -252,7 +250,7 @@ class TestGoalTranslation:
         outcome = diagnose_instruction(
             translator,
             "polish the top drawer",
-            build_seed_library(),
+            library,
             miniature_universe,
             context=None,
             working_directory=tmp_path,
@@ -273,7 +271,9 @@ class TestGoalTranslation:
         assert "polish the top drawer" in query.text
         assert "drawer surface has been polished" in query.text
 
-    def test_ambiguous_reference_requests_clarification(self, miniature_universe):
+    def test_ambiguous_reference_requests_clarification(
+        self, miniature_universe, library
+    ):
         translator = translator_with(
             json.dumps(
                 {
@@ -285,16 +285,14 @@ class TestGoalTranslation:
             )
         )
 
-        understanding = translator.interpret(
-            "open it", build_seed_library(), miniature_universe
-        )
+        understanding = translator.interpret("open it", library, miniature_universe)
 
         assert understanding.status is TaskUnderstandingStatus.CLARIFICATION_NEEDED
         assert understanding.message == "Which drawer should I open?"
         assert understanding.goal == ()
 
     def test_existing_predicate_cannot_be_reported_as_model_gap(
-        self, miniature_universe
+        self, miniature_universe, library
     ):
         translator = translator_with(
             model_gap_json("opened", "the drawer is open", "cabinet10-drawer-top"),
@@ -302,7 +300,7 @@ class TestGoalTranslation:
         )
 
         understanding = translator.interpret(
-            "open the top drawer", build_seed_library(), miniature_universe
+            "open the top drawer", library, miniature_universe
         )
 
         assert understanding.status is TaskUnderstandingStatus.READY

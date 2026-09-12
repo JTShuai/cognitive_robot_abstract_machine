@@ -22,14 +22,16 @@ from resym.planning.execution.engine import (
     execute,
 )
 from resym.planning.pddl import GroundAction
+from resym.core.grounding import PredicateGroundingPlan
 from resym.platform.embodiment import EmbodimentProfile
-from resym.platform.evaluators import EVALUATORS, EvaluationContext
+from resym.platform.grounding_context import EvaluationContext
 from resym.platform.universe import GroundedObject, ObjectUniverse
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
 from semantic_digital_twin.world_description.world_entity import Body
 
 from .capability_helpers import capability_contract, execution_binding
+from .test_binary_grounding import STUB_CHECKSUM, catalog_with, factory_uid
 
 ROBOT_TYPE = SymbolType.from_python_type(AbstractRobot)
 CAPABILITY_UID = "test:Noop"
@@ -63,36 +65,30 @@ def miniature_universe() -> ObjectUniverse:
 
 @pytest.fixture()
 def context() -> EvaluationContext:
-    return EvaluationContext(
-        world=None,
-        robot=None,
-        profile=EmbodimentProfile(
-            name="stub",
-            evaluators=frozenset({"true", "false", "failure"}),
-            capabilities=frozenset({CAPABILITY_UID}),
-        ),
-    )
-
-
-@pytest.fixture(autouse=True)
-def predicate_queries():
-    def fail(query_context, universe, arguments):
+    def fail(query_context, universe, arguments, parameters):
         raise GroundingFailure(
             GroundingFailureCode.RESOURCE_LIMIT,
             "query budget exhausted",
         )
 
-    EVALUATORS.update(
-        {"true": lambda *arguments: True, "false": lambda *arguments: False}
+    catalog = catalog_with(
+        true=lambda *arguments: True,
+        false=lambda *arguments: False,
+        failure=fail,
     )
-    EVALUATORS["failure"] = fail
-    yield
-    for name in ("true", "false", "failure"):
-        del EVALUATORS[name]
+    return EvaluationContext(
+        world=None,
+        robot=None,
+        profile=EmbodimentProfile(
+            name="stub",
+            capabilities=frozenset({CAPABILITY_UID}),
+        ),
+        grounding_catalog=catalog,
+    )
 
 
 def library_with(
-    evaluator: str,
+    factory: str,
     *,
     precondition: bool = True,
     negated: bool = False,
@@ -102,8 +98,11 @@ def library_with(
         PredicateSymbol(
             name="probe",
             parameter_types=(ROBOT_TYPE,),
-            evaluator=evaluator,
             fluent=True,
+            grounding_plan=PredicateGroundingPlan(
+                factory_uid=factory_uid(factory),
+                approved_factory_checksum=STUB_CHECKSUM,
+            ),
         )
     )
     library.add(

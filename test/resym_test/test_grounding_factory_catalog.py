@@ -5,10 +5,12 @@ Grounding-factory discovery, review, materialization, and runtime resolution.
 from __future__ import annotations
 
 import json
+import inspect
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from resym.core.grounding import (
     GroundingFactoryCandidate,
     GroundingFactoryOrigin,
@@ -16,17 +18,22 @@ from resym.core.grounding import (
     GroundingFactoryRole,
     GroundingFactorySourceKind,
     PredicateGroundingPlan,
+    text_checksum,
 )
 from resym.core.model import (
-    GROUNDING_PLAN_EVALUATOR_KEY,
     PredicateSymbol,
     SymbolLibrary,
     SymbolType,
 )
 from resym.llm.schemas import PredicateProposal
 from resym.planning.grounding import evaluate_predicate
+from resym.platform.capabilities import (
+    ARTICULATED_PART_TYPE,
+    ARTICULATION_CAPABILITY_UID,
+)
 from resym.platform.embodiment import EmbodimentProfile
-from resym.platform.evaluators import EvaluationContext
+from resym.platform.feasibility import feasibility_factory_uid
+from resym.platform.grounding_context import EvaluationContext
 from resym.platform.grounding_catalog import (
     GroundingFactoryCatalog,
     GroundingFactoryCatalogError,
@@ -43,6 +50,8 @@ from resym.platform.grounding_catalog import (
 from resym.platform.universe import GroundedObject, ObjectUniverse
 from resym.repair.curator import Curator
 from resym.repair.patch import ModelPatch
+
+from experiments.resym.grounding_initialization import JOINT_FRACTION_OPENED_UID
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Drawer
@@ -62,21 +71,25 @@ DATASET = Path(__file__).parent / "dataset" / "grounding_factories"
 
 
 def vocabulary() -> GroundingVocabulary:
+    from krrood.entity_query_language import factories
+
+    source_file = Path(inspect.getsourcefile(factories.entity))
+    source_checksum = text_checksum(source_file.read_text(encoding="utf-8"))
     return GroundingVocabulary(
         entries=(
             GroundingVocabularyEntry(
                 qualified_name="krrood.entity_query_language.factories.entity",
                 kind=GroundingVocabularyKind.EQL_FACTORY,
                 signature="entity(selected_variable)",
-                source_file="factories.py",
-                source_checksum="entity-checksum",
+                source_file=str(source_file),
+                source_checksum=source_checksum,
             ),
             GroundingVocabularyEntry(
                 qualified_name="krrood.entity_query_language.factories.variable",
                 kind=GroundingVocabularyKind.EQL_FACTORY,
                 signature="variable(type_, domain=None)",
-                source_file="factories.py",
-                source_checksum="variable-checksum",
+                source_file=str(source_file),
+                source_checksum=source_checksum,
             ),
         )
     )
@@ -107,6 +120,47 @@ def test_scanner_discovers_symbolic_functions_and_predicate_classes() -> None:
         is GroundingVocabularyKind.SYMBOLIC_FUNCTION
     )
     assert entries["fixture_grounding.Near"].kind is GroundingVocabularyKind.PREDICATE
+
+
+def test_scanner_collapses_overload_declarations_to_the_runtime_symbol(
+    tmp_path,
+) -> None:
+    source = tmp_path / "factories.py"
+    source.write_text(
+        "from typing import overload\n"
+        "@overload\ndef a(value: int) -> int: ...\n"
+        "@overload\ndef a(value: str) -> str: ...\n"
+        "def a(value):\n    return value\n"
+    )
+
+    discovered = discover_grounding_vocabulary(
+        {"krrood.entity_query_language.factories": source}
+    )
+
+    assert tuple(item.qualified_name for item in discovered.entries) == (
+        "krrood.entity_query_language.factories.a",
+    )
+
+
+def test_synchronizing_one_vocabulary_scope_preserves_another(tmp_path) -> None:
+    workspace = GroundingFactoryWorkspace(tmp_path)
+    first, second = vocabulary().entries
+    workspace.synchronize_vocabulary(
+        GroundingVocabulary((first,)), discovery_scope="platform"
+    )
+    workspace.approve_vocabulary(first.qualified_name, reviewer="human")
+
+    workspace.synchronize_vocabulary(
+        GroundingVocabulary((second,)), discovery_scope="experiment"
+    )
+
+    assert {
+        item.entry.qualified_name for item in workspace.vocabulary_candidates()
+    } == {
+        first.qualified_name,
+        second.qualified_name,
+    }
+    assert workspace.reviewed_vocabulary().entries == (first,)
 
 
 def test_scanned_eql_vocabulary_requires_review_and_detects_source_drift(
@@ -181,7 +235,7 @@ def test_agent_candidate_stays_non_executable_until_human_approval(tmp_path) -> 
     assert (workspace.approved_package_directory / "__init__.py").is_file()
 
 
-def test_approved_local_factory_uses_the_same_runtime_catalog_as_platform_factories(
+def test_approved_local_factory_is_served_by_the_runtime_catalog(
     tmp_path,
 ) -> None:
     workspace = GroundingFactoryWorkspace(tmp_path)
@@ -200,7 +254,7 @@ def test_approved_local_factory_uses_the_same_runtime_catalog_as_platform_factor
 
     assert procedure(None, ObjectUniverse(), (), {}) is True
     assert catalog.specification(specification.uid) == specification
-    assert any(entry.origin is GroundingFactoryOrigin.PLATFORM for entry in catalog)
+    assert all(entry.origin is GroundingFactoryOrigin.LOCAL for entry in catalog)
 
 
 def test_approved_factory_replacement_invalidates_old_plan_checksum(tmp_path) -> None:
@@ -250,6 +304,25 @@ def test_materializer_rejects_source_outside_the_scanned_eql_vocabulary(
     assert workspace.specifications() == ()
 
 
+def test_materializer_rejects_a_non_boolean_return(tmp_path) -> None:
+    workspace = GroundingFactoryWorkspace(tmp_path)
+    invalid = replace(
+        candidate(),
+        source_code=(
+            "def evaluate(context, universe, arguments, parameters):\n"
+            "    return []\n"
+        ),
+    )
+    workspace.submit(invalid)
+
+    with pytest.raises(GroundingFactorySourceError, match="statically Boolean"):
+        workspace.approve(
+            invalid.candidate_id,
+            reviewer="human-reviewer",
+            vocabulary=GroundingVocabulary(),
+        )
+
+
 def test_predicate_plan_resolves_factory_and_applies_negation(tmp_path) -> None:
     workspace = GroundingFactoryWorkspace(tmp_path)
     workspace.submit(candidate())
@@ -262,7 +335,6 @@ def test_predicate_plan_resolves_factory_and_applies_negation(tmp_path) -> None:
     predicate = PredicateSymbol(
         name="closed",
         parameter_types=(),
-        evaluator="legacy-unused",
         fluent=True,
         grounding_plan=PredicateGroundingPlan(
             factory_uid=specification.uid,
@@ -321,15 +393,15 @@ def opened_drawer() -> tuple[ObjectUniverse, GroundedObject]:
     return universe, grounded
 
 
-def test_platform_threshold_plan_evaluates_the_drawer_joint_fraction(
-    opened_drawer,
+def test_reviewed_local_factory_evaluates_the_drawer_joint_fraction(
+    opened_drawer, grounding_catalog
 ) -> None:
     """
-    A plan threshold replaces the budget threshold on the same articulation query.
+    The approved articulation EQL factory decides the plan's threshold.
     """
     universe, drawer = opened_drawer
-    catalog = GroundingFactoryCatalog.load()
-    specification = catalog.specification("resym:grounding/joint-fraction-opened")
+    catalog = grounding_catalog
+    specification = catalog.specification(JOINT_FRACTION_OPENED_UID)
     context = EvaluationContext(
         world=None,
         robot=None,
@@ -341,7 +413,6 @@ def test_platform_threshold_plan_evaluates_the_drawer_joint_fraction(
         return PredicateSymbol(
             name="opened",
             parameter_types=(DRAWER_TYPE,),
-            evaluator=GROUNDING_PLAN_EVALUATOR_KEY,
             fluent=True,
             grounding_plan=PredicateGroundingPlan(
                 factory_uid=specification.uid,
@@ -355,12 +426,13 @@ def test_platform_threshold_plan_evaluates_the_drawer_joint_fraction(
     assert evaluate_predicate(opened(0.9), (drawer,), universe, context) is False
 
 
-def test_approving_a_candidate_with_an_already_owned_uid_is_rejected(
+def test_approving_a_candidate_in_the_feasibility_namespace_is_rejected(
     tmp_path,
 ) -> None:
     workspace = GroundingFactoryWorkspace(tmp_path)
     colliding = replace(
-        candidate(), proposed_uid="resym:grounding/joint-fraction-opened"
+        candidate(),
+        proposed_uid=feasibility_factory_uid(ARTICULATION_CAPABILITY_UID),
     )
     workspace.submit(colliding)
 
@@ -376,8 +448,6 @@ def test_approving_a_candidate_with_an_already_owned_uid_is_rejected(
         workspace.candidates()[0].review_status
         is GroundingFactoryReviewStatus.PENDING_REVIEW
     )
-    catalog = GroundingFactoryCatalog.load(workspace=workspace)
-    assert any(entry.origin is GroundingFactoryOrigin.PLATFORM for entry in catalog)
 
 
 def test_local_source_drift_disables_the_factory_without_breaking_the_catalog(
@@ -402,15 +472,60 @@ def test_local_source_drift_disables_the_factory_without_breaking_the_catalog(
             specification.uid,
             expected_checksum=specification.implementation_checksum,
         )
-    platform_specification = catalog.specification(
-        "resym:grounding/joint-fraction-opened"
+    assert catalog.unavailable == {
+        specification.uid: catalog.unavailable[specification.uid]
+    }
+
+
+def test_reviewed_dependency_drift_disables_the_local_factory(
+    tmp_path, monkeypatch
+) -> None:
+    helper_module = tmp_path / "reviewed_helper.py"
+    helper_module.write_text(
+        "def relation(value):\n    return value is not None\n",
+        encoding="utf-8",
     )
-    assert callable(
-        catalog.resolve(
-            platform_specification.uid,
-            expected_checksum=platform_specification.implementation_checksum,
+    monkeypatch.syspath_prepend(str(tmp_path))
+    reviewed_vocabulary = GroundingVocabulary(
+        entries=(
+            GroundingVocabularyEntry(
+                qualified_name="reviewed_helper.relation",
+                kind=GroundingVocabularyKind.QUERY_HELPER,
+                signature="(value)",
+                source_file=str(helper_module),
+                source_checksum=text_checksum(
+                    helper_module.read_text(encoding="utf-8")
+                ),
+            ),
         )
     )
+    proposal = replace(
+        candidate(),
+        candidate_id="dependency-drift-candidate",
+        source_code=(
+            "from reviewed_helper import relation\n\n"
+            "def evaluate(context, universe, arguments, parameters):\n"
+            "    return bool(relation(arguments['object']))\n"
+        ),
+    )
+    workspace = GroundingFactoryWorkspace(tmp_path / "workspace")
+    workspace.submit(proposal)
+    specification = workspace.approve(
+        proposal.candidate_id,
+        reviewer="human-reviewer",
+        vocabulary=reviewed_vocabulary,
+    )
+
+    helper_module.write_text(
+        "def relation(value):\n    return False\n",
+        encoding="utf-8",
+    )
+    catalog = GroundingFactoryCatalog.load(workspace=workspace)
+
+    assert specification.uid in catalog.unavailable
+    assert "dependency 'reviewed_helper.relation' changed" in catalog.unavailable[
+        specification.uid
+    ]
 
 
 def test_curator_checks_factory_identity_checksum_and_role_types(tmp_path) -> None:
@@ -424,7 +539,6 @@ def test_curator_checks_factory_identity_checksum_and_role_types(tmp_path) -> No
     predicate = PredicateSymbol(
         name="inside-region",
         parameter_types=(ROBOT_TYPE,),
-        evaluator=GROUNDING_PLAN_EVALUATOR_KEY,
         fluent=True,
         grounding_plan=PredicateGroundingPlan(
             factory_uid=specification.uid,
@@ -433,7 +547,6 @@ def test_curator_checks_factory_identity_checksum_and_role_types(tmp_path) -> No
         ),
     )
     curator = Curator(
-        known_evaluators=frozenset(),
         available_capabilities=frozenset(),
         grounding_factory_specs={specification.uid: specification},
     )
@@ -446,7 +559,6 @@ def test_curator_checks_factory_identity_checksum_and_role_types(tmp_path) -> No
     drifted = PredicateSymbol(
         name="inside-region",
         parameter_types=(ROBOT_TYPE,),
-        evaluator=GROUNDING_PLAN_EVALUATOR_KEY,
         fluent=True,
         grounding_plan=PredicateGroundingPlan(
             factory_uid=specification.uid,
@@ -460,13 +572,14 @@ def test_curator_checks_factory_identity_checksum_and_role_types(tmp_path) -> No
     assert any("checksum" in objection for objection in objections)
 
 
-def test_closed_reuses_opened_factory_by_negation_with_explicit_threshold() -> None:
-    catalog = GroundingFactoryCatalog.load()
-    specification = catalog.specification("resym:grounding/joint-fraction-opened")
+def test_closed_reuses_opened_factory_by_negation_with_explicit_threshold(
+    grounding_catalog,
+) -> None:
+    catalog = grounding_catalog
+    specification = catalog.specification(JOINT_FRACTION_OPENED_UID)
     assert "threshold:number[0.0,1.0]" in catalog.render()
     specs = {item.uid: item for item in catalog}
     curator = Curator(
-        known_evaluators=frozenset(),
         available_capabilities=frozenset(),
         grounding_factory_specs=specs,
     )
@@ -474,8 +587,7 @@ def test_closed_reuses_opened_factory_by_negation_with_explicit_threshold() -> N
     def closed(parameters):
         return PredicateSymbol(
             name="closed",
-            parameter_types=(DRAWER_TYPE,),
-            evaluator=GROUNDING_PLAN_EVALUATOR_KEY,
+            parameter_types=(ARTICULATED_PART_TYPE,),
             fluent=True,
             grounding_plan=PredicateGroundingPlan(
                 factory_uid=specification.uid,
@@ -522,10 +634,21 @@ def test_agent_predicate_proposal_can_reference_an_approved_grounding_plan() -> 
 
     predicate = proposal.to_predicate_symbol()
 
-    assert predicate.evaluator == GROUNDING_PLAN_EVALUATOR_KEY
-    assert predicate.grounding_plan is not None
+    assert not hasattr(predicate, "evaluator")
     assert predicate.grounding_plan.negated is True
     assert predicate.grounding_plan.parameters == (("threshold", 0.9),)
+
+
+def test_agent_predicate_proposal_rejects_legacy_evaluator() -> None:
+    with pytest.raises(ValidationError):
+        PredicateProposal.model_validate(
+            {
+                "name": "closed",
+                "parameter_types": [ROBOT_TYPE.python_type_ref],
+                "evaluator": "drawer_closed",
+                "fluent": True,
+            }
+        )
 
 
 def test_symbol_library_round_trips_a_predicate_grounding_plan(tmp_path) -> None:

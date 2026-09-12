@@ -2326,7 +2326,15 @@ def _render_grounding_vocabulary_candidate(
         f"{html.escape(entry.qualified_name)}</code></b> "
         f"<span class='badge'>{html.escape(status)}</span>"
         f"<div>{html.escape(entry.signature)} · {html.escape(entry.kind.value)}</div>"
-        "<div class=muted>source checksum: <code>"
+        + (
+            f"<div class=muted>{html.escape(entry.documentation)}</div>"
+            if entry.documentation
+            else ""
+        )
+        + "<div class=muted>source: <code>"
+        + html.escape(entry.source_file)
+        + "</code></div>"
+        + "<div class=muted>source checksum: <code>"
         f"{html.escape(entry.source_checksum)}</code></div>{controls}</div>"
     )
 
@@ -2887,24 +2895,10 @@ def _truth_procedure_cell(predicate: dict) -> str:
         if rendered_parameters:
             details.append(f"parameters <code>{rendered_parameters}</code>")
         details.append(f"checksum <code>{checksum}</code>")
+        procedure_ref = predicate.get("truth_procedure_ref")
+        if isinstance(procedure_ref, dict):
+            details.append(_stable_ref_cell(procedure_ref))
         return "grounding plan · " + " · ".join(details)
-    procedure_ref = predicate.get("truth_procedure_ref")
-    if isinstance(procedure_ref, dict):
-        reference = _stable_ref_cell(procedure_ref)
-        evaluator = predicate.get("evaluator")
-        return (
-            f"reviewed query <code>{html.escape(str(evaluator))}</code> · {reference}"
-        )
-    implementation = predicate.get("implementation")
-    if isinstance(implementation, dict):
-        reference = _stable_ref_cell(implementation.get("ref"))
-        evaluator = implementation.get("evaluator_key")
-        return (
-            f"reviewed query <code>{html.escape(str(evaluator))}</code> · {reference}"
-        )
-    evaluator = predicate.get("evaluator")
-    if evaluator:
-        return f"evaluator <code>{html.escape(str(evaluator))}</code>"
     return "<span class=muted>none</span>"
 
 
@@ -4818,7 +4812,7 @@ FAULT_TEMPLATE_HINTS = {
     "wrong-parameter-type": "open-drawer types its handle parameter as a drawer",
     "contract-effect-conflict": "the articulation contract no longer covers the claimed effect",
     "unsupported-navigation-library": "models drawer opening the mobile-robot way on a fixed arm",
-    "broken-evaluator-binding": "'opened' references an evaluator no embodiment registers",
+    "broken-grounding-binding": "'opened' references a grounding factory no reviewed catalog provides",
     "combined-missing-close-and-delete-effect": "no close operator, and open-drawer also forgets to un-close",
     "combined-misbinding-and-missing-close": "open-drawer requests CLOSED and the close operator is missing",
 }

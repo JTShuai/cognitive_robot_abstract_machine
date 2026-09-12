@@ -12,7 +12,8 @@ import pytest
 from resym.planning.execution.coraplex import CoraplexSkillRealization
 from experiments.resym.scenes import Scene, load_scene
 from experiments.resym.seed_library import build_seed_library
-from resym.platform.evaluators import EvaluationContext
+from resym.platform.grounding_context import EvaluationContext
+from resym.platform.kinematic import KinematicFeasibility
 from resym.platform.articulation import articulation_connection
 from resym.planning.execution.engine import ExecutionViolation, execute
 from resym.core.model import Literal
@@ -107,7 +108,9 @@ def test_computed_truth_pipeline_opens_the_drawer(
     assert joint_position > 0.1
 
 
-def test_coraplex_backend_performs_the_plan_with_cram_designators(tmp_path):
+def test_coraplex_backend_performs_the_plan_with_cram_designators(
+    tmp_path, grounding_catalog
+):
     """
     The same task, executed through CRAM: NavigateAction and OpenAction are performed by
     giskard's QP controller under simulated execution.
@@ -123,6 +126,8 @@ def test_coraplex_backend_performs_the_plan_with_cram_designators(tmp_path):
         world=setup.world,
         robot=setup.robot,
         profile=setup.profile,
+        grounding_catalog=grounding_catalog,
+        capability_feasibility=KinematicFeasibility(),
     )
     events = []
 
@@ -130,7 +135,7 @@ def test_coraplex_backend_performs_the_plan_with_cram_designators(tmp_path):
         events.append((event, data))
 
     result = solve_task(
-        library=build_seed_library(),
+        library=build_seed_library(grounding_catalog),
         universe=universe,
         context=context,
         goal=(Literal("opened", (pddl_name(GOAL_DRAWER),)),),

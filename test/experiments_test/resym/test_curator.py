@@ -17,8 +17,9 @@ from experiments.resym.icra.validation import (
     MandatorySuite,
     SuiteGroup,
 )
+from dataclasses import replace
+
 from resym.core.model import (
-    EvaluatorSpec,
     Literal,
     Operator,
     PredicateSymbol,
@@ -27,6 +28,14 @@ from resym.core.model import (
 )
 from resym.repair.versioning import VersionedLibraryStore
 from .capability_helpers import capability_contract, execution_binding
+from resym.core.grounding import (
+    GroundingFactoryOrigin,
+    GroundingFactoryParameter,
+    GroundingFactoryParameterType,
+    GroundingFactoryRole,
+    GroundingFactorySpec,
+    PredicateGroundingPlan,
+)
 
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Drawer
@@ -35,7 +44,33 @@ DRAWER_TYPE = SymbolType.from_python_type(Drawer)
 ROBOT_TYPE = SymbolType.from_python_type(AbstractRobot)
 
 
-KNOWN_EVALUATORS = frozenset({"drawer_opened", "drawer_closed"})
+ARTICULATION_FACTORY_UID = "test:grounding/articulation-state"
+ARTICULATION_FACTORY_SPEC = GroundingFactorySpec(
+    uid=ARTICULATION_FACTORY_UID,
+    semantic_name="articulation-state",
+    implementation_ref="test_stub:evaluate",
+    implementation_checksum="reviewed-checksum",
+    roles=(GroundingFactoryRole("articulated_object", DRAWER_TYPE),),
+    origin=GroundingFactoryOrigin.LOCAL,
+    reviewed_by="human-reviewer",
+    approved_at="test-time",
+    active_revision_id="r0001",
+    parameters=(
+        GroundingFactoryParameter(
+            name="threshold",
+            value_type=GroundingFactoryParameterType.NUMBER,
+            minimum=0.0,
+            maximum=1.0,
+        ),
+    ),
+)
+GROUNDING_FACTORY_SPECS = {ARTICULATION_FACTORY_UID: ARTICULATION_FACTORY_SPEC}
+JOINT_FRACTION_PLAN = PredicateGroundingPlan(
+    factory_uid=ARTICULATION_FACTORY_UID,
+    approved_factory_checksum=ARTICULATION_FACTORY_SPEC.implementation_checksum,
+    role_bindings=(("articulated_object", 0),),
+    parameters=(("threshold", 0.4),),
+)
 CAPABILITY_UID = "test:DrawerStateChange"
 AVAILABLE_CAPABILITIES = frozenset({CAPABILITY_UID})
 
@@ -47,8 +82,8 @@ def base_library() -> SymbolLibrary:
             PredicateSymbol(
                 name=name,
                 parameter_types=(DRAWER_TYPE,),
-                evaluator="drawer_opened",
                 fluent=fluent,
+                grounding_plan=JOINT_FRACTION_PLAN,
             )
         )
     library.add_capability_contract(
@@ -120,23 +155,17 @@ def passing_suite(recorder: list[str] | None = None) -> MandatorySuite:
 
 def curator_with(suite: MandatorySuite) -> BehaviouralCurator:
     return BehaviouralCurator(
-        known_evaluators=KNOWN_EVALUATORS,
         available_capabilities=AVAILABLE_CAPABILITIES,
+        grounding_factory_specs=GROUNDING_FACTORY_SPECS,
         suite=suite,
     )
 
 
 def typed_curator(suite: MandatorySuite) -> BehaviouralCurator:
     return BehaviouralCurator(
-        known_evaluators=KNOWN_EVALUATORS,
         available_capabilities=AVAILABLE_CAPABILITIES,
+        grounding_factory_specs=GROUNDING_FACTORY_SPECS,
         suite=suite,
-        evaluator_specs={
-            "drawer_opened": EvaluatorSpec(
-                "drawer_opened",
-                (DRAWER_TYPE,),
-            ),
-        },
         allowed_symbol_types=frozenset({ROBOT_TYPE}),
     )
 
@@ -207,16 +236,16 @@ def test_effect_contract_conflict_is_static():
 
 def test_clean_patch_passes_static_review():
     curator = Curator(
-        known_evaluators=KNOWN_EVALUATORS,
         available_capabilities=AVAILABLE_CAPABILITIES,
+        grounding_factory_specs=GROUNDING_FACTORY_SPECS,
     )
     assert curator.static_review(good_patch(), base_library()) == []
 
 
 def test_core_curator_admits_without_a_behavioural_suite(tmp_path):
     curator = Curator(
-        known_evaluators=KNOWN_EVALUATORS,
         available_capabilities=AVAILABLE_CAPABILITIES,
+        grounding_factory_specs=GROUNDING_FACTORY_SPECS,
     )
     library = base_library()
     store = VersionedLibraryStore(tmp_path)
@@ -233,14 +262,17 @@ def test_core_curator_admits_without_a_behavioural_suite(tmp_path):
     }
 
 
-def test_unknown_evaluator_is_rejected_by_the_platform_catalog():
+def test_unknown_grounding_factory_is_rejected_by_the_platform_catalog():
+    unreviewed = replace(
+        JOINT_FRACTION_PLAN, factory_uid="test:grounding/not-registered"
+    )
     patch = ModelPatch(
         predicates=(
             PredicateSymbol(
                 name="has-handle",
                 parameter_types=(DRAWER_TYPE,),
-                evaluator="not_registered",
                 fluent=False,
+                grounding_plan=unreviewed,
             ),
         )
     )
@@ -248,7 +280,8 @@ def test_unknown_evaluator_is_rejected_by_the_platform_catalog():
     objections = curator_with(passing_suite()).static_review(patch, base_library())
 
     assert any(
-        "unknown truth procedure 'not_registered'" in item for item in objections
+        f"unknown grounding factory '{unreviewed.factory_uid}'" in item
+        for item in objections
     )
 
 
@@ -278,8 +311,8 @@ def test_unknown_predicate_type_is_an_objection_not_an_exception():
     predicate = PredicateSymbol(
         name="bad",
         parameter_types=(misspelled,),
-        evaluator="drawer_opened",
         fluent=True,
+        grounding_plan=JOINT_FRACTION_PLAN,
     )
 
     objections = typed_curator(passing_suite()).static_review(
@@ -295,13 +328,13 @@ def test_unknown_predicate_type_is_an_objection_not_an_exception():
     ), objections
 
 
-def test_typed_catalog_rejects_evaluator_and_capability_role_mismatches():
+def test_typed_catalog_rejects_grounding_and_capability_role_mismatches():
     curator = typed_curator(passing_suite())
     wrong_predicate = PredicateSymbol(
         name="bad",
         parameter_types=(ROBOT_TYPE,),
-        evaluator="drawer_opened",
         fluent=True,
+        grounding_plan=JOINT_FRACTION_PLAN,
     )
     objections = curator.static_review(
         ModelPatch(
@@ -317,7 +350,7 @@ def test_typed_catalog_rejects_evaluator_and_capability_role_mismatches():
         ),
         base_library(),
     )
-    assert any("evaluator 'drawer_opened' expects" in item for item in objections)
+    assert any("role 'articulated_object' expects" in item for item in objections)
     assert any(
         "parameter 'r'" in item and "role 'patient'" in item for item in objections
     )
@@ -495,8 +528,8 @@ def test_admission_resolves_and_pins_an_existing_catalog_contract(tmp_path):
         ),
     )
     curator = BehaviouralCurator(
-        known_evaluators=KNOWN_EVALUATORS,
         available_capabilities=frozenset({catalog_uid}),
+        grounding_factory_specs=GROUNDING_FACTORY_SPECS,
         capability_catalog=(contract,),
         suite=MandatorySuite(
             version=suite.version,

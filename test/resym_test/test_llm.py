@@ -12,7 +12,6 @@ import json
 import pytest
 from pydantic import BaseModel
 
-from .library_fixtures import build_fixed_arm_library
 
 from resym.llm.client import (
     ScriptedCompletionClient,
@@ -212,8 +211,12 @@ class TestProposalSchemas:
             {
                 "name": "held",
                 "parameter_types": [HANDLE_TYPE.python_type_ref],
-                "evaluator": "drawer_closed",
                 "fluent": True,
+                "grounding_plan": {
+                    "factory_uid": "resym:grounding/joint-fraction-opened",
+                    "approved_factory_checksum": "reviewed-checksum",
+                    "role_bindings": {"articulated_object": 0},
+                },
             }
         )
         assert proposal.to_predicate_symbol().parameter_types == (HANDLE_TYPE,)
@@ -228,8 +231,12 @@ class TestProposalSchemas:
                 {
                     "name": "near",
                     "parameter_types": [DRAWER_TYPE.python_type_ref],
-                    "evaluator": "drawer_closed",
                     "fluent": True,
+                    "grounding_plan": {
+                        "factory_uid": "resym:grounding/joint-fraction-opened",
+                        "approved_factory_checksum": "reviewed-checksum",
+                        "role_bindings": {"articulated_object": 0},
+                    },
                     "program": {},
                 }
             )
@@ -239,7 +246,7 @@ class TestProposalSchemas:
 
         from resym.llm.schemas import PredicateProposal
 
-        with pytest.raises(ValidationError, match="evaluator"):
+        with pytest.raises(ValidationError, match="grounding_plan"):
             PredicateProposal.model_validate(
                 {
                     "name": "new-predicate",
@@ -274,10 +281,10 @@ class TestProposalSchemas:
 
         assert model.color in named_colors()
 
-    def test_partial_operator_update_preserves_omitted_fields(self):
+    def test_partial_operator_update_preserves_omitted_fields(self, fixed_arm_library):
         from resym.llm.schemas import OperatorProposal
 
-        library = build_fixed_arm_library()
+        library = fixed_arm_library
         original = library.operators["open-drawer"]
         proposal = OperatorProposal.model_validate(
             {
@@ -306,10 +313,12 @@ class TestProposalSchemas:
         assert updated.execution_binding == original.execution_binding
         assert updated.add_effects[0].predicate == "opened"
 
-    def test_parameter_type_edit_preserves_the_rest_of_the_signature(self):
+    def test_parameter_type_edit_preserves_the_rest_of_the_signature(
+        self, fixed_arm_library
+    ):
         from resym.llm.schemas import OperatorProposal
 
-        original = build_fixed_arm_library().operators["open-drawer"]
+        original = fixed_arm_library.operators["open-drawer"]
         proposal = OperatorProposal.model_validate(
             {
                 "name": "open-drawer",
@@ -324,10 +333,10 @@ class TestProposalSchemas:
         assert updated.parameters == original.parameters
         assert dict(updated.parameters)["h"] == HANDLE_TYPE
 
-    def test_parameter_type_edit_rejects_an_unknown_parameter(self):
+    def test_parameter_type_edit_rejects_an_unknown_parameter(self, fixed_arm_library):
         from resym.llm.schemas import OperatorProposal
 
-        original = build_fixed_arm_library().operators["open-drawer"]
+        original = fixed_arm_library.operators["open-drawer"]
         proposal = OperatorProposal.model_validate(
             {
                 "name": "open-drawer",
@@ -340,11 +349,13 @@ class TestProposalSchemas:
         with pytest.raises(ValueError, match="unknown parameters: missing"):
             proposal.to_operator(original)
 
-    def test_literal_edits_change_one_precondition_without_replacing_the_list(self):
+    def test_literal_edits_change_one_precondition_without_replacing_the_list(
+        self, fixed_arm_library
+    ):
         from resym.core.model import Literal
         from resym.llm.schemas import OperatorProposal
 
-        original = build_fixed_arm_library().operators["open-drawer"]
+        original = fixed_arm_library.operators["open-drawer"]
         wrong = Literal("opened", ("d",))
         corrupted = original.__class__(
             name=original.name,
@@ -401,10 +412,10 @@ class TestProposalSchemas:
                 }
             )
 
-    def test_literal_edits_reject_removal_of_an_absent_literal(self):
+    def test_literal_edits_reject_removal_of_an_absent_literal(self, fixed_arm_library):
         from resym.llm.schemas import OperatorProposal
 
-        original = build_fixed_arm_library().operators["open-drawer"]
+        original = fixed_arm_library.operators["open-drawer"]
         proposal = OperatorProposal.model_validate(
             {
                 "name": "open-drawer",
@@ -444,13 +455,13 @@ class TestProposalSchemas:
 
 
 class TestPromptListings:
-    def test_contracts_and_existing_bindings_are_fully_visible(self):
+    def test_contracts_and_existing_bindings_are_fully_visible(self, fixed_arm_library):
         from resym.llm.prompting import (
             render_capability_contracts,
             render_operators,
         )
 
-        library = build_fixed_arm_library()
+        library = fixed_arm_library
         contracts = render_capability_contracts(library)
         operators = render_operators(library)
 
@@ -466,10 +477,10 @@ class TestPromptListings:
         assert "target_state <- 'OPEN'" in operators
         assert "resym:ArticulationStateChange@1" not in contracts + operators
 
-    def test_type_listing_includes_subtype_relations(self):
+    def test_type_listing_includes_subtype_relations(self, fixed_arm_library):
         from resym.llm.prompting import render_symbol_types
 
-        listing = render_symbol_types(build_fixed_arm_library().symbol_types)
+        listing = render_symbol_types(fixed_arm_library.symbol_types)
 
         assert (
             f"{ROBOT_TYPE.python_type_ref} <: " f"{AGENT_TYPE.python_type_ref}"

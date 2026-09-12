@@ -21,7 +21,7 @@ from resym.core.model import Literal, SymbolLibrary, is_symbol_subtype
 from resym.llm.prompting import render_predicates, render_prompt
 from resym.llm.schemas import GoalTranslation
 from resym.llm.structured import StructuredCompleter
-from resym.platform.evaluators import EvaluationContext
+from resym.platform.grounding_context import EvaluationContext
 from resym.platform.universe import ObjectUniverse
 from resym.platform.krrood_queries import (
     KrroodObjectResolver,

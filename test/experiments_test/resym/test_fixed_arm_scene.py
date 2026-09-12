@@ -12,7 +12,9 @@ from __future__ import annotations
 import pytest
 
 from experiments.resym.scenes import Scene
-from experiments.resym.seed_library import build_fixed_arm_library, build_seed_library
+from experiments.resym.seed_library import build_seed_library
+from resym.platform.capabilities import ARTICULATION_CAPABILITY_UID
+from resym.platform.kinematic import KinematicFeasibility
 from resym.platform.embodiment import UnsupportedCapabilityError
 from resym.core.model import Literal, is_symbol_subtype
 from resym.platform.capabilities import NAVIGATION_CAPABILITY_UID
@@ -53,27 +55,25 @@ def test_the_arm_beside_the_furniture_reaches_the_goal_drawer(
     The reachability smoke of the table placement: from beside the furniture, `ready-to-
     open` must be provably TRUE — not merely unknown — for the goal drawer.
     """
-    from resym.platform.evaluators import ready_to_open
-
-    verdict = ready_to_open(
-        tracy_context,
-        tracy_universe,
+    verdict = KinematicFeasibility().feasible(
+        ARTICULATION_CAPABILITY_UID,
         (
             tracy_universe[robot_name(tracy_universe)],
             tracy_universe[GOAL_DRAWER],
         ),
+        tracy_context,
     )
     assert verdict is True
 
 
 def test_open_then_close_without_navigation(
-    tracy_setup, tracy_universe, tracy_context, tmp_path
+    tracy_setup, tracy_universe, tracy_context, tmp_path, fixed_arm_library
 ):
     """
     The full fixed-arm loop: one-action plans (no navigate exists), monitored dispatch,
     postconditions, and the independent goal check — in both manipulation directions.
     """
-    library = build_fixed_arm_library()
+    library = fixed_arm_library
     opened = solve_task(
         library=library,
         universe=tracy_universe,
@@ -98,7 +98,7 @@ def test_open_then_close_without_navigation(
 
 
 def test_mobile_library_on_the_fixed_arm_is_unsupported_not_a_library_gap(
-    tracy_universe, tracy_context, tmp_path
+    tracy_universe, tracy_context, tmp_path, grounding_catalog
 ):
     """
     The mobile seed library's closure needs `openable` (base-pose sampling) and the
@@ -107,7 +107,7 @@ def test_mobile_library_on_the_fixed_arm_is_unsupported_not_a_library_gap(
     """
     with pytest.raises(UnsupportedCapabilityError) as error:
         solve_task(
-            library=build_seed_library(),
+            library=build_seed_library(grounding_catalog),
             universe=tracy_universe,
             context=tracy_context,
             goal=(Literal("opened", (GOAL_DRAWER,)),),
@@ -120,7 +120,7 @@ def test_mobile_library_on_the_fixed_arm_is_unsupported_not_a_library_gap(
 
 
 def test_unsupported_capability_certificate_from_the_refusal(
-    tracy_universe, tracy_context, tmp_path
+    tracy_universe, tracy_context, tmp_path, grounding_catalog
 ):
     from resym.repair.certificate import (
         FailureClass,
@@ -130,7 +130,7 @@ def test_unsupported_capability_certificate_from_the_refusal(
     goal = (Literal("opened", (GOAL_DRAWER,)),)
     with pytest.raises(UnsupportedCapabilityError) as error:
         solve_task(
-            library=build_seed_library(),
+            library=build_seed_library(grounding_catalog),
             universe=tracy_universe,
             context=tracy_context,
             goal=goal,

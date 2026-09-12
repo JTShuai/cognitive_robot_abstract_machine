@@ -38,8 +38,8 @@ from resym.platform.articulation import (
 
 
 @pytest.fixture(scope="module")
-def bench(tracy_setup, tracy_universe):
-    return build_tracy_bench(tracy_setup, tracy_universe)
+def bench(tracy_setup, tracy_universe, grounding_catalog):
+    return build_tracy_bench(tracy_setup, tracy_universe, grounding_catalog)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -56,8 +56,10 @@ def restore_scene_afterwards(tracy_setup, tracy_universe):
 
 
 @pytest.fixture(scope="module")
-def template():
-    templates = drawer_fault_templates(build_fixed_arm_library())
+def template(grounding_catalog):
+    templates = drawer_fault_templates(
+        build_fixed_arm_library(grounding_catalog), grounding_catalog
+    )
     return next(t for t in templates if t.identifier == "missing-close-operator")
 
 
@@ -153,12 +155,16 @@ def test_apply_variation_restores_non_drawer_world_state(bench):
     assert fraction == pytest.approx(0.03)
 
 
-def test_frozen_admission_scenes_are_order_independent(bench, tmp_path):
-    templates = drawer_fault_templates(build_fixed_arm_library())
+def test_frozen_admission_scenes_are_order_independent(
+    bench, tmp_path, grounding_catalog
+):
+    templates = drawer_fault_templates(
+        build_fixed_arm_library(grounding_catalog), grounding_catalog
+    )
     template = next(
         item for item in templates if item.identifier == "missing-open-operator"
     )
-    correct = build_fixed_arm_library()
+    correct = build_fixed_arm_library(grounding_catalog)
     for index, seed in enumerate((384452587, 626401695)):
         outcome = bench.runner(
             correct,

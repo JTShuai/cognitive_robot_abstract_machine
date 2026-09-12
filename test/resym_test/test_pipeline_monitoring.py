@@ -2,16 +2,17 @@
 Closed-loop monitoring in solve_task: final goal verification, nogood recording, and
 refusal to repeat an already-failed plan unchanged.
 
-Stub evaluators and a stub backend over a miniature universe; Fast Downward runs for
-real, so this lives in the container suite.
+Stub grounding factories and a stub backend over a miniature universe; Fast Downward
+runs for real, so this lives in the container suite.
 """
 
 from __future__ import annotations
 
 import pytest
 
+from resym.core.grounding import PredicateGroundingPlan
 from resym.platform.embodiment import EmbodimentProfile
-from resym.platform.evaluators import EVALUATORS, EvaluationContext
+from resym.platform.grounding_context import EvaluationContext
 from resym.planning.execution.engine import (
     ExecutionViolation,
     PlatformExecutionResult,
@@ -33,6 +34,7 @@ from resym.platform.universe import GroundedObject, ObjectUniverse
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.world_description.world_entity import Body
 from .capability_helpers import capability_contract, execution_binding
+from .test_binary_grounding import STUB_CHECKSUM, catalog_with, factory_uid
 
 from resym.core.model import SymbolType
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
@@ -45,8 +47,8 @@ CAPABILITY_UID = "test:SetDone"
 
 class StubWorld:
     """
-    One boolean of world state, mutated by the stub skill and read by the stub evaluator
-    — the smallest possible closed loop.
+    One boolean of world state, mutated by the stub skill and read by the stub grounding
+    factory — the smallest possible closed loop.
     """
 
     def __init__(self):
@@ -86,13 +88,6 @@ def stub_world():
 
 
 @pytest.fixture()
-def stub_evaluator(stub_world):
-    EVALUATORS["stub_done"] = lambda context, universe, arguments: stub_world.done
-    yield
-    del EVALUATORS["stub_done"]
-
-
-@pytest.fixture()
 def miniature_universe():
     universe = ObjectUniverse()
     universe.add(
@@ -112,8 +107,11 @@ def library():
         PredicateSymbol(
             name="done",
             parameter_types=(ROBOT_TYPE,),
-            evaluator="stub_done",
             fluent=True,
+            grounding_plan=PredicateGroundingPlan(
+                factory_uid=factory_uid("stub_done"),
+                approved_factory_checksum=STUB_CHECKSUM,
+            ),
         )
     )
     library.add(
@@ -135,24 +133,29 @@ def library():
 GOAL = (Literal("done", ("rob",)),)
 
 
-def stub_context():
+@pytest.fixture()
+def stub_context(stub_world):
+    catalog = catalog_with(
+        stub_done=lambda context, universe, arguments, parameters: stub_world.done
+    )
     profile = EmbodimentProfile(
         name="stub",
-        evaluators=frozenset({"stub_done"}),
         capabilities=frozenset({CAPABILITY_UID}),
     )
-    return EvaluationContext(world=None, robot=None, profile=profile)
+    return EvaluationContext(
+        world=None, robot=None, profile=profile, grounding_catalog=catalog
+    )
 
 
 def test_working_skill_passes_postcondition_and_goal_check(
-    stub_evaluator, stub_world, miniature_universe, library, tmp_path
+    stub_context, stub_world, miniature_universe, library, tmp_path
 ):
     backend = StubRealization(stub_world, actually_works=True)
     events = []
     result = solve_task(
         library,
         miniature_universe,
-        stub_context(),
+        stub_context,
         GOAL,
         tmp_path,
         realization=backend,
@@ -170,7 +173,7 @@ def test_working_skill_passes_postcondition_and_goal_check(
 
 
 def test_broken_skill_fails_postcondition_then_refuses_repeat(
-    stub_evaluator, stub_world, miniature_universe, library, tmp_path
+    stub_context, stub_world, miniature_universe, library, tmp_path
 ):
     """
     A skill that silently does nothing: round 1 catches the unmaterialized effect,
@@ -182,7 +185,7 @@ def test_broken_skill_fails_postcondition_then_refuses_repeat(
         solve_task(
             library,
             miniature_universe,
-            stub_context(),
+            stub_context,
             GOAL,
             tmp_path,
             realization=backend,
@@ -194,12 +197,12 @@ def test_broken_skill_fails_postcondition_then_refuses_repeat(
 
 
 def test_repeated_platform_rejection_preserves_its_native_code(
-    stub_evaluator, miniature_universe, library, tmp_path
+    stub_context, miniature_universe, library, tmp_path
 ):
     diagnosis = diagnose(
         library,
         miniature_universe,
-        stub_context(),
+        stub_context,
         GOAL,
         tmp_path,
         realization=RejectingRealization(),
@@ -211,12 +214,12 @@ def test_repeated_platform_rejection_preserves_its_native_code(
 
 
 def test_unsupported_platform_result_is_classified_as_unsupported_capability(
-    stub_evaluator, miniature_universe, library, tmp_path
+    stub_context, miniature_universe, library, tmp_path
 ):
     diagnosis = diagnose(
         library,
         miniature_universe,
-        stub_context(),
+        stub_context,
         GOAL,
         tmp_path,
         realization=UnsupportedRealization(),
@@ -231,7 +234,7 @@ def test_unsupported_platform_result_is_classified_as_unsupported_capability(
 
 
 def test_goal_check_catches_what_disabled_postconditions_miss(
-    stub_evaluator, stub_world, miniature_universe, library, tmp_path
+    stub_context, stub_world, miniature_universe, library, tmp_path
 ):
     """
     With postcondition checks ablated, the broken skill slips through execution — the
@@ -242,7 +245,7 @@ def test_goal_check_catches_what_disabled_postconditions_miss(
         solve_task(
             library,
             miniature_universe,
-            stub_context(),
+            stub_context,
             GOAL,
             tmp_path,
             realization=backend,
@@ -254,7 +257,7 @@ def test_goal_check_catches_what_disabled_postconditions_miss(
 
 
 def test_fully_ablated_monitoring_reports_false_success(
-    stub_evaluator, stub_world, miniature_universe, library, tmp_path
+    stub_context, stub_world, miniature_universe, library, tmp_path
 ):
     """
     The one-shot baseline of E3: no postcondition check, no goal check — the broken
@@ -266,7 +269,7 @@ def test_fully_ablated_monitoring_reports_false_success(
     result = solve_task(
         library,
         miniature_universe,
-        stub_context(),
+        stub_context,
         GOAL,
         tmp_path,
         realization=backend,

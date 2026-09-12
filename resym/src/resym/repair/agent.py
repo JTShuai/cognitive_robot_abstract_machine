@@ -40,6 +40,9 @@ from resym.core.grounding import (
 from resym.repair.patch import ModelPatch
 from resym.core.model import SymbolLibrary, SymbolType
 from resym.platform.capabilities import matching_capability_contracts
+from resym.platform.grounding_catalog import (
+    DuplicateGroundingFactoryCandidateError,
+)
 from resym.core.provenance import KnowledgeSource
 from resym.repair.backends import (
     BudgetExhaustedError,
@@ -295,22 +298,19 @@ class RetrievalAugmentedPlanningAgent(RepairBackend):
             return EmbodimentResult(
                 message=(
                     f"capabilities:\n{task.capability_listing}\n"
-                    f"evaluators:\n{task.evaluator_listing}\n"
+                    "grounding factories:\n"
+                    f"{task.grounding_factory_listing or '- none'}\n"
                     "platform contract drafts:\n"
                     f"{task.capability_draft_listing or '- none'}"
                 ),
                 capabilities=task.capability_listing,
-                evaluators=task.evaluator_listing,
+                grounding_factories=task.grounding_factory_listing,
             )
 
         def inspect_grounding_catalog(
             arguments: NoArguments,
         ) -> GroundingCatalogResult:
-            primitives = (
-                task.grounding_factory_listing
-                or task.evaluator_listing
-                or "- none registered"
-            )
+            primitives = task.grounding_factory_listing or "- none registered"
             vocabulary = task.grounding_vocabulary_listing or "- none discovered"
             return GroundingCatalogResult(
                 message=(
@@ -705,7 +705,18 @@ class RetrievalAugmentedPlanningAgent(RepairBackend):
                     candidate=to_json(candidate),
                     objections=["no grounding candidate store is configured"],
                 )
-            task.grounding_candidate_sink(candidate)
+            try:
+                task.grounding_candidate_sink(candidate)
+            except DuplicateGroundingFactoryCandidateError:
+                return GroundingFactoryCandidateResult(
+                    message=(
+                        f"candidate id '{candidate.candidate_id}' already exists; "
+                        "submit a new revision under a new candidate id"
+                    ),
+                    registered=False,
+                    candidate=to_json(candidate),
+                    objections=["duplicate grounding-factory candidate id"],
+                )
             state.grounding_factory_candidate = candidate
             return GroundingFactoryCandidateResult(
                 message=(
@@ -746,7 +757,7 @@ class RetrievalAugmentedPlanningAgent(RepairBackend):
                 ),
                 RepairTool(
                     "inspect_embodiment_profile",
-                    "capabilities, contracts, and evaluators of this platform",
+                    "capabilities, contracts, and grounding factories of this platform",
                     NoArguments,
                     EmbodimentResult,
                     inspect_embodiment_profile,
@@ -828,8 +839,8 @@ class RetrievalAugmentedPlanningAgent(RepairBackend):
                 RepairTool(
                     "propose_grounding_factory_candidate",
                     (
-                        "draft a bounded native-EQL evaluator for the human review "
-                        "queue when no reviewed grounding factory is sufficient"
+                        "draft a bounded native-EQL grounding factory for the "
+                        "human review queue when no reviewed factory is sufficient"
                     ),
                     GroundingFactoryCandidateArguments,
                     GroundingFactoryCandidateResult,
@@ -886,12 +897,7 @@ class RetrievalAugmentedPlanningAgent(RepairBackend):
                     }
                 )
             ),
-            evaluators=task.evaluator_listing,
-            predicate_queries=(
-                task.grounding_factory_listing
-                or task.evaluator_listing
-                or "- none registered"
-            ),
+            predicate_queries=task.grounding_factory_listing or "- none registered",
             grounding_vocabulary=(
                 task.grounding_vocabulary_listing or "- none discovered"
             ),
@@ -931,7 +937,6 @@ def _candidate_signature(patch: ModelPatch) -> tuple:
             (
                 predicate.name,
                 predicate.parameter_types,
-                predicate.evaluator,
                 predicate.grounding_plan,
                 predicate.fluent,
             )

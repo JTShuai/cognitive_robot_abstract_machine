@@ -30,7 +30,6 @@ from krrood.adapters.json_serializer import to_json
 from resym.repair.patch import ModelPatch
 from resym.core.model import (
     CapabilityContract,
-    EvaluatorSpec,
     GroundingFactorySpec,
     Operator,
     PredicateSymbol,
@@ -65,9 +64,7 @@ class Curator:
     Deterministic static admission authority over one library.
     """
 
-    known_evaluators: frozenset[str]
     available_capabilities: frozenset[str]
-    evaluator_specs: Mapping[str, EvaluatorSpec] = field(default_factory=dict)
     allowed_symbol_types: frozenset[SymbolType] = frozenset()
     capability_catalog: tuple[CapabilityContract, ...] = ()
     """
@@ -91,9 +88,7 @@ class Curator:
         return static_objections(
             patch,
             library,
-            self.known_evaluators,
             self.available_capabilities,
-            self.evaluator_specs,
             self.allowed_symbol_types,
             self.capability_catalog,
             self.grounding_factory_specs,
@@ -151,9 +146,7 @@ class Curator:
 def static_objections(
     patch: ModelPatch,
     library: SymbolLibrary,
-    known_evaluators: frozenset[str],
     available_capabilities: frozenset[str],
-    evaluator_specs: Mapping[str, EvaluatorSpec] | None = None,
     allowed_symbol_types: frozenset[SymbolType] = frozenset(),
     capability_catalog: tuple[CapabilityContract, ...] = (),
     grounding_factory_specs: Mapping[str, GroundingFactorySpec] | None = None,
@@ -162,15 +155,9 @@ def static_objections(
     Every static reason the patch may not be admitted; empty means clean.
     """
     objections: list[str] = []
-    evaluator_specs = evaluator_specs or {}
     grounding_factory_specs = grounding_factory_specs or {}
     catalog = set(library.symbol_types)
     catalog.update(allowed_symbol_types)
-    catalog.update(
-        symbol_type
-        for spec in evaluator_specs.values()
-        for symbol_type in spec.parameter_types
-    )
     catalog.update(
         symbol_type
         for contract in capability_catalog
@@ -209,35 +196,11 @@ def static_objections(
             subject, predicate.parameter_types, allowed_type_refs
         )
         objections.extend(type_objections)
-        if predicate.grounding_plan is not None:
-            objections.extend(
-                _grounding_plan_objections(
-                    predicate, grounding_factory_specs, invalid_types
-                )
+        objections.extend(
+            _grounding_plan_objections(
+                predicate, grounding_factory_specs, invalid_types
             )
-        else:
-            implementation = predicate.implementation
-            if implementation.evaluator_key not in known_evaluators:
-                objections.append(
-                    f"{subject}: unknown truth procedure "
-                    f"'{implementation.evaluator_key}'"
-                )
-            elif implementation.evaluator_key in evaluator_specs and not invalid_types:
-                spec = evaluator_specs[implementation.evaluator_key]
-                compatible_signature = len(predicate.parameter_types) == len(
-                    spec.parameter_types
-                ) and all(
-                    is_symbol_subtype(declared, accepted)
-                    for declared, accepted in zip(
-                        predicate.parameter_types, spec.parameter_types
-                    )
-                )
-                if not compatible_signature:
-                    objections.append(
-                        f"{subject}: evaluator '{implementation.evaluator_key}' expects "
-                        f"{_types(spec.parameter_types)}, symbol declares "
-                        f"{_types(predicate.parameter_types)}"
-                    )
+        )
         known_predicates[predicate.name] = predicate
 
     contracts = dict(library.capability_contracts)
@@ -263,9 +226,7 @@ def static_objections(
                 subject,
                 known_predicates,
                 contracts,
-                known_evaluators,
                 available_capabilities,
-                evaluator_specs,
                 allowed_type_refs,
             )
         )
@@ -281,8 +242,6 @@ def _grounding_plan_objections(
     Validate one predicate-to-factory plan without executing its query.
     """
     plan = predicate.grounding_plan
-    if plan is None:
-        return []
     subject = f"predicate '{predicate.name}'"
     specification = specifications.get(plan.factory_uid)
     if specification is None:
@@ -377,9 +336,7 @@ def _operator_objections(
     subject: str,
     known_predicates: dict,
     contracts: dict,
-    known_evaluators: frozenset[str],
     available_capabilities: frozenset[str],
-    evaluator_specs: Mapping[str, EvaluatorSpec],
     allowed_type_refs: frozenset[str],
 ) -> list[str]:
     objections: list[str] = []

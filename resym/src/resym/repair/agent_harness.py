@@ -198,7 +198,7 @@ class LibraryResult(ToolResult):
 
 class EmbodimentResult(ToolResult):
     capabilities: str
-    evaluators: str
+    grounding_factories: str
 
 
 class GroundingCatalogResult(ToolResult):

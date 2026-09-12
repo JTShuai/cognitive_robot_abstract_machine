@@ -18,6 +18,8 @@ from resym.planning.pddl import write_domain, write_problem
 from resym.planning.selection import Selection
 from resym.platform.universe import GroundedObject, ObjectUniverse
 
+from .grounding_helpers import STUB_GROUNDING_PLAN
+
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
 from semantic_digital_twin.semantic_annotations.mixins import HasMechanicalJoint
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
@@ -39,7 +41,7 @@ def test_cram_type_reference_roundtrip_uses_python_class():
         PredicateSymbol(
             name="available",
             parameter_types=(DRAWER_TYPE,),
-            evaluator="test_available",
+            grounding_plan=STUB_GROUNDING_PLAN,
             fluent=False,
         )
     )
@@ -65,7 +67,7 @@ def test_library_rejects_legacy_short_type_names():
         PredicateSymbol(
             name="available",
             parameter_types=(DRAWER_TYPE,),
-            evaluator="test_available",
+            grounding_plan=STUB_GROUNDING_PLAN,
             fluent=False,
         )
     )
@@ -94,7 +96,7 @@ def test_pddl_projection_encodes_cram_types_as_static_predicates():
     predicate = PredicateSymbol(
         name="opened",
         parameter_types=(ARTICULATED_PART_TYPE,),
-        evaluator="opened",
+        grounding_plan=STUB_GROUNDING_PLAN,
         fluent=True,
     )
     selection = Selection(predicates={predicate.name: predicate})
@@ -142,7 +144,7 @@ def test_task_universe_keeps_only_selected_symbol_types():
     predicate = PredicateSymbol(
         name="opened",
         parameter_types=(DRAWER_TYPE,),
-        evaluator="opened",
+        grounding_plan=STUB_GROUNDING_PLAN,
         fluent=True,
     )
     selection = Selection(predicates={predicate.name: predicate})

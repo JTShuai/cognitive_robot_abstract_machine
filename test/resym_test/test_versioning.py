@@ -21,6 +21,7 @@ from resym.core.model import (
     contract_violations,
 )
 from .capability_helpers import capability_contract, execution_binding
+from .grounding_helpers import STUB_GROUNDING_PLAN
 from resym.repair.versioning import (
     CorruptVersionError,
     EmptyStoreError,
@@ -36,14 +37,13 @@ from semantic_digital_twin.semantic_annotations.semantic_annotations import Draw
 DRAWER_TYPE = SymbolType.from_python_type(Drawer)
 
 
-
 def seed_library() -> SymbolLibrary:
     library = SymbolLibrary()
     library.add(
         PredicateSymbol(
             name="opened",
             parameter_types=(DRAWER_TYPE,),
-            evaluator="drawer_opened",
+            grounding_plan=STUB_GROUNDING_PLAN,
             fluent=True,
         )
     )
@@ -137,12 +137,10 @@ def test_contract_matches_a_local_predicate_by_stable_reference():
         name="is-open",
         uid="soma:Opened",
         parameter_types=(DRAWER_TYPE,),
-        evaluator="drawer_opened",
+        grounding_plan=STUB_GROUNDING_PLAN,
         fluent=True,
     )
-    contract = capability_contract(
-        "test:Pull", (("patient", DRAWER_TYPE),), ()
-    )
+    contract = capability_contract("test:Pull", (("patient", DRAWER_TYPE),), ())
     contract = type(contract)(
         uid=contract.uid,
         label=contract.label,
@@ -225,7 +223,7 @@ def test_tampered_version_is_refused(tmp_path):
     v1 = store.commit(seed_library())
     path = tmp_path / "versions" / f"{v1}.json"
     record = json.loads(path.read_text())
-    record["library"]["predicates"][0]["evaluator"] = "tampered"
+    record["library"]["predicates"][0]["name"] = "tampered"
     path.write_text(json.dumps(record))
     with pytest.raises(CorruptVersionError):
         store.load(v1)

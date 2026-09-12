@@ -16,7 +16,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from typing_extensions import Optional
 
 from resym.core.model import (
-    GROUNDING_PLAN_EVALUATOR_KEY,
     BindingSource,
     CapabilityRef,
     Literal,
@@ -133,9 +132,8 @@ class PredicateProposal(BaseModel):
 
     name: str
     parameter_types: list[str]
-    evaluator: Optional[str] = None
     fluent: bool
-    grounding_plan: Optional[GroundingPlanModel] = None
+    grounding_plan: GroundingPlanModel
     uid: Optional[str] = None
     """
     Stable semantic identity when the predicate realizes a known ref (for example a
@@ -143,16 +141,6 @@ class PredicateProposal(BaseModel):
     """
 
     version: str = "1"
-
-    @model_validator(mode="after")
-    def has_one_grounding_implementation(self) -> PredicateProposal:
-        if self.evaluator is None and self.grounding_plan is None:
-            raise ValueError("predicate needs an evaluator or grounding_plan")
-        if self.evaluator is not None and self.grounding_plan is not None:
-            raise ValueError(
-                "predicate cannot use evaluator and grounding_plan together"
-            )
-        return self
 
     @field_validator("parameter_types")
     @classmethod
@@ -170,15 +158,10 @@ class PredicateProposal(BaseModel):
         return PredicateSymbol(
             name=self.name,
             parameter_types=tuple(SymbolType(t) for t in self.parameter_types),
-            evaluator=self.evaluator or GROUNDING_PLAN_EVALUATOR_KEY,
             fluent=self.fluent,
+            grounding_plan=self.grounding_plan.to_plan(),
             uid=self.uid,
             version=self.version,
-            grounding_plan=(
-                self.grounding_plan.to_plan()
-                if self.grounding_plan is not None
-                else None
-            ),
         )
 
 

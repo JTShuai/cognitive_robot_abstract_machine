@@ -51,7 +51,7 @@ def open_goal():
 
 
 def test_partial_skill_is_caught_by_the_postcondition_check(
-    tracy_setup, tracy_universe, tracy_context, tmp_path, open_goal
+    tracy_setup, tracy_universe, tracy_context, tmp_path, open_goal, grounding_catalog
 ):
     """
     The first pull completes only 30% of its motion — below the opened threshold — so
@@ -60,7 +60,7 @@ def test_partial_skill_is_caught_by_the_postcondition_check(
     """
     close_drawer(tracy_setup, tracy_universe, GOAL_DRAWER)
     diagnosis = diagnose(
-        build_fixed_arm_library(),
+        build_fixed_arm_library(grounding_catalog),
         tracy_universe,
         tracy_context,
         open_goal,
@@ -74,11 +74,11 @@ def test_partial_skill_is_caught_by_the_postcondition_check(
 
 
 def test_unscheduled_actions_pass_through_unchanged(
-    tracy_setup, tracy_universe, tracy_context, tmp_path, open_goal
+    tracy_setup, tracy_universe, tracy_context, tmp_path, open_goal, grounding_catalog
 ):
     close_drawer(tracy_setup, tracy_universe, GOAL_DRAWER)
     diagnosis = diagnose(
-        build_fixed_arm_library(),
+        build_fixed_arm_library(grounding_catalog),
         tracy_universe,
         tracy_context,
         open_goal,
@@ -90,7 +90,7 @@ def test_unscheduled_actions_pass_through_unchanged(
 
 
 def test_external_disturbance_is_caught_immediately(
-    tracy_setup, tracy_universe, tracy_context, tmp_path, open_goal
+    tracy_setup, tracy_universe, tracy_context, tmp_path, open_goal, grounding_catalog
 ):
     """
     Someone pushes the drawer shut right after the robot opened it; the immediate
@@ -98,7 +98,7 @@ def test_external_disturbance_is_caught_immediately(
     """
     close_drawer(tracy_setup, tracy_universe, GOAL_DRAWER)
     diagnosis = diagnose(
-        build_fixed_arm_library(),
+        build_fixed_arm_library(grounding_catalog),
         tracy_universe,
         tracy_context,
         open_goal,
@@ -112,7 +112,7 @@ def test_external_disturbance_is_caught_immediately(
 
 
 def test_monitoring_ablation_blindly_reports_success(
-    tracy_setup, tracy_universe, tracy_context, tmp_path, open_goal
+    tracy_setup, tracy_universe, tracy_context, tmp_path, open_goal, grounding_catalog
 ):
     """
     The deliberate baseline: with postcondition and goal checks off, the same
@@ -121,7 +121,7 @@ def test_monitoring_ablation_blindly_reports_success(
     """
     close_drawer(tracy_setup, tracy_universe, GOAL_DRAWER)
     diagnosis = diagnose(
-        build_fixed_arm_library(),
+        build_fixed_arm_library(grounding_catalog),
         tracy_universe,
         tracy_context,
         open_goal,

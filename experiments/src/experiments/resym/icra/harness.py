@@ -61,7 +61,11 @@ from experiments.resym.icra.articulation.faults import (
     GroundTruth,
     _opposite_target_binding,
 )
-from resym.core.model import CapabilityContract, SymbolLibrary
+from resym.core.model import (
+    CapabilityContract,
+    GroundingFactoryCandidate,
+    SymbolLibrary,
+)
 from resym.llm.client import TransientInfrastructureError
 from resym.evaluation.stats import (
     PairedBootstrap,
@@ -109,8 +113,15 @@ class ExperimentBench:
     held_out: Callable[
         [FaultTemplate, tuple[FaultCase, ...], SymbolLibrary, Path], list[str]
     ]
-    evaluator_listing: str
+    grounding_factory_listing: str
     capability_listing: str
+    grounding_vocabulary_listing: str = ""
+    validate_grounding_candidate: Optional[
+        Callable[[GroundingFactoryCandidate], tuple[str, ...]]
+    ] = None
+    grounding_candidate_sink: Optional[Callable[[GroundingFactoryCandidate], None]] = (
+        None
+    )
     capability_catalog: tuple[CapabilityContract, ...] = ()
     """Reviewed platform catalog, separate from the task's symbol library."""
     capability_draft_listing: str = ""
@@ -318,7 +329,10 @@ def run_e1_episode(
     repair_task = RepairTask(
         certificate=initial.certificate,
         library=faulted,
-        evaluator_listing=bench.evaluator_listing,
+        grounding_factory_listing=bench.grounding_factory_listing,
+        grounding_vocabulary_listing=bench.grounding_vocabulary_listing,
+        validate_grounding_candidate=bench.validate_grounding_candidate,
+        grounding_candidate_sink=bench.grounding_candidate_sink,
         capability_listing=bench.capability_listing,
         capability_catalog=bench.capability_catalog,
         capability_draft_listing=bench.capability_draft_listing,

@@ -1,30 +1,31 @@
 """
-The seeded symbol library of the demo.
-
-In the full design this library is grown by gated LLM proposals and refined by execution
-failures (stage B); here it is seeded by hand once, saved to JSON, and reused unchanged
-across both demo scenes. Nothing in it references any particular scene.
+Task model constructed from the reviewed platform catalogs for experiments.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from resym import PROJECT_ROOT
 from resym.core.model import (
     CapabilityRef,
     Literal,
     Operator,
     OperatorExecutionBinding,
+    PredicateGroundingPlan,
     PredicateSymbol,
     RoleBinding,
     SymbolLibrary,
 )
+from resym.platform.feasibility import feasibility_factory_uid
+from resym.platform.grounding_catalog import GroundingFactoryCatalog
 from resym.platform.capabilities import (
     ARTICULATION_CAPABILITY_UID,
     NAVIGATION_CAPABILITY_UID,
     articulation_capability_contract,
     navigation_capability_contract,
+)
+
+from experiments.resym.grounding_initialization import (
+    INTERACTION_POINT_OF_UID,
+    JOINT_FRACTION_OPENED_UID,
 )
 
 from resym.core.model import SymbolType
@@ -39,18 +40,13 @@ HANDLE_TYPE = SymbolType.from_python_type(Handle)
 ROBOT_TYPE = SymbolType.from_python_type(AbstractRobot)
 
 
-LIBRARY_PATH = PROJECT_ROOT / "library" / "seed_library.json"
+OPENED_FRACTION_THRESHOLD = 0.4
 """
-Where the persistent library artifact lives.
-"""
-
-FIXED_ARM_LIBRARY_PATH = PROJECT_ROOT / "library" / "fixed_arm_library.json"
-"""
-The correct fixed-arm library artifact — the baseline the P2 fault templates mutate.
+Task-model threshold for the binary opened/closed articulation state.
 """
 
 
-def build_seed_library() -> SymbolLibrary:
+def build_seed_library(catalog: GroundingFactoryCatalog) -> SymbolLibrary:
     """
     Construct the drawer-opening library: five predicates, two operators.
     """
@@ -59,40 +55,52 @@ def build_seed_library() -> SymbolLibrary:
         PredicateSymbol(
             name="handle-of",
             parameter_types=(HANDLE_TYPE, DRAWER_TYPE),
-            evaluator="handle_of",
             fluent=False,
+            grounding_plan=build_grounding_plan(
+                catalog,
+                INTERACTION_POINT_OF_UID,
+                (("interaction_point", 0), ("articulated_object", 1)),
+            ),
         )
     )
     library.add(
         PredicateSymbol(
             name="closed",
             parameter_types=(DRAWER_TYPE,),
-            evaluator="drawer_closed",
             fluent=True,
+            grounding_plan=_articulation_state_plan(catalog, negated=True),
         )
     )
     library.add(
         PredicateSymbol(
             name="opened",
             parameter_types=(DRAWER_TYPE,),
-            evaluator="drawer_opened",
             fluent=True,
+            grounding_plan=_articulation_state_plan(catalog),
         )
     )
     library.add(
         PredicateSymbol(
             name="ready-to-open",
             parameter_types=(ROBOT_TYPE, DRAWER_TYPE),
-            evaluator="ready_to_open",
             fluent=True,
+            grounding_plan=build_grounding_plan(
+                catalog,
+                feasibility_factory_uid(ARTICULATION_CAPABILITY_UID),
+                (("actor", 0), ("patient", 1)),
+            ),
         )
     )
     library.add(
         PredicateSymbol(
             name="openable",
             parameter_types=(ROBOT_TYPE, DRAWER_TYPE),
-            evaluator="openable",
             fluent=False,
+            grounding_plan=build_grounding_plan(
+                catalog,
+                feasibility_factory_uid(NAVIGATION_CAPABILITY_UID),
+                (("actor", 0), ("patient", 1)),
+            ),
         )
     )
     library.add(
@@ -128,7 +136,7 @@ def build_seed_library() -> SymbolLibrary:
     return library
 
 
-def build_fixed_arm_library() -> SymbolLibrary:
+def build_fixed_arm_library(catalog: GroundingFactoryCatalog) -> SymbolLibrary:
     """
     The correct library of the fixed-arm embodiment: no navigation and no witness-pose
     predicate — reachability from the mount is a grounding fact (``ready-to-open``), not
@@ -142,32 +150,40 @@ def build_fixed_arm_library() -> SymbolLibrary:
         PredicateSymbol(
             name="handle-of",
             parameter_types=(HANDLE_TYPE, DRAWER_TYPE),
-            evaluator="handle_of",
             fluent=False,
+            grounding_plan=build_grounding_plan(
+                catalog,
+                INTERACTION_POINT_OF_UID,
+                (("interaction_point", 0), ("articulated_object", 1)),
+            ),
         )
     )
     library.add(
         PredicateSymbol(
             name="closed",
             parameter_types=(DRAWER_TYPE,),
-            evaluator="drawer_closed",
             fluent=True,
+            grounding_plan=_articulation_state_plan(catalog, negated=True),
         )
     )
     library.add(
         PredicateSymbol(
             name="opened",
             parameter_types=(DRAWER_TYPE,),
-            evaluator="drawer_opened",
             fluent=True,
+            grounding_plan=_articulation_state_plan(catalog),
         )
     )
     library.add(
         PredicateSymbol(
             name="ready-to-open",
             parameter_types=(ROBOT_TYPE, DRAWER_TYPE),
-            evaluator="ready_to_open",
             fluent=True,
+            grounding_plan=build_grounding_plan(
+                catalog,
+                feasibility_factory_uid(ARTICULATION_CAPABILITY_UID),
+                (("actor", 0), ("patient", 1)),
+            ),
         )
     )
     library.add(
@@ -220,6 +236,41 @@ def _navigation_binding() -> OperatorExecutionBinding:
     )
 
 
+def build_grounding_plan(
+    catalog: GroundingFactoryCatalog,
+    factory_uid: str,
+    role_bindings: tuple[tuple[str, int], ...],
+    parameters: tuple[tuple[str, float], ...] = (),
+    negated: bool = False,
+) -> PredicateGroundingPlan:
+    """
+    Bind a task predicate to the current reviewed factory implementation.
+    """
+    specification = catalog.specification(factory_uid)
+    return PredicateGroundingPlan(
+        factory_uid=factory_uid,
+        approved_factory_checksum=specification.implementation_checksum,
+        role_bindings=role_bindings,
+        parameters=parameters,
+        negated=negated,
+    )
+
+
+def _articulation_state_plan(
+    catalog: GroundingFactoryCatalog, negated: bool = False
+) -> PredicateGroundingPlan:
+    """
+    Create the plan shared by the opened and closed predicates.
+    """
+    return build_grounding_plan(
+        catalog,
+        JOINT_FRACTION_OPENED_UID,
+        (("articulated_object", 0),),
+        (("threshold", OPENED_FRACTION_THRESHOLD),),
+        negated,
+    )
+
+
 def _articulation_binding(target_state: str) -> OperatorExecutionBinding:
     return OperatorExecutionBinding(
         CapabilityRef(ARTICULATION_CAPABILITY_UID),
@@ -230,26 +281,3 @@ def _articulation_binding(target_state: str) -> OperatorExecutionBinding:
             ("target_state", RoleBinding.constant(target_state)),
         ),
     )
-
-
-def save_seed_library() -> Path:
-    """
-    Build and persist the library artifact; returns its path.
-    """
-    LIBRARY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    build_seed_library().save(LIBRARY_PATH)
-    return LIBRARY_PATH
-
-
-def save_fixed_arm_library() -> Path:
-    """
-    Build and persist the fixed-arm library artifact; returns its path.
-    """
-    FIXED_ARM_LIBRARY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    build_fixed_arm_library().save(FIXED_ARM_LIBRARY_PATH)
-    return FIXED_ARM_LIBRARY_PATH
-
-
-if __name__ == "__main__":
-    print(f"library saved to {save_seed_library()}")
-    print(f"fixed-arm library saved to {save_fixed_arm_library()}")

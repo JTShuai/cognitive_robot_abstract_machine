@@ -41,6 +41,7 @@ import os
 from pathlib import Path
 
 from experiments.resym.scenes import Scene, load_fixed_arm_scene
+from experiments.resym.grounding_initialization import default_drawer_grounding_catalog
 from experiments.resym.seed_library import build_fixed_arm_library
 from experiments.resym.icra.articulation.faults import (
     ADMISSION,
@@ -171,7 +172,12 @@ def main() -> None:
     print("[smoke] loading Tracy scene ...")
     setup = load_fixed_arm_scene(Scene.APARTMENT)
     universe = task_object_universe(setup.world, setup.robot)
-    bench = build_tracy_bench(setup, universe, index=build_frozen_index())
+    bench = build_tracy_bench(
+        setup,
+        universe,
+        default_drawer_grounding_catalog(),
+        index=build_frozen_index(),
+    )
     completer = StructuredCompleter(
         client=build_completion_client(configuration),
         transcript=TranscriptRecorder(path=recorder.transcript_path),
@@ -179,7 +185,10 @@ def main() -> None:
     )
     print(f"[smoke] model: {completer.client.description}")
 
-    templates = drawer_fault_templates(build_fixed_arm_library())
+    grounding_catalog = default_drawer_grounding_catalog()
+    templates = drawer_fault_templates(
+        build_fixed_arm_library(grounding_catalog), grounding_catalog
+    )
     template = next((t for t in templates if t.identifier == arguments.template), None)
     if template is None:
         raise SystemExit(

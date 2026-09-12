@@ -18,7 +18,6 @@ from resym.core.model import (  # noqa: E402
     CapabilityContract,
     CapabilityRef,
     CapabilityRole,
-    GROUNDING_PLAN_EVALUATOR_KEY,
     Literal,
     OntologyAlignment,
     Operator,
@@ -37,6 +36,7 @@ from resym.platform.grounding_catalog import (  # noqa: E402
     GroundingFactoryWorkspace,
 )
 
+from .grounding_helpers import STUB_GROUNDING_PLAN  # noqa: E402
 from .test_grounding_factory_catalog import candidate, vocabulary  # noqa: E402
 
 from resym.core.model import SymbolType
@@ -492,8 +492,8 @@ def _fixture_library(extra_opened_predicate: bool = False) -> SymbolLibrary:
         PredicateSymbol(
             name="closed",
             parameter_types=(DRAWER_TYPE,),
-            evaluator="drawer_closed",
             fluent=True,
+            grounding_plan=STUB_GROUNDING_PLAN,
         )
     )
     if extra_opened_predicate:
@@ -501,8 +501,8 @@ def _fixture_library(extra_opened_predicate: bool = False) -> SymbolLibrary:
             PredicateSymbol(
                 name="opened",
                 parameter_types=(DRAWER_TYPE,),
-                evaluator="drawer_opened",
                 fluent=True,
+                grounding_plan=STUB_GROUNDING_PLAN,
                 provenance=Provenance(source="repair-agent"),
             )
         )
@@ -557,7 +557,7 @@ def test_system_library_page_renders_readably(tmp_path):
     client = create_app(runs, library_dir=library_dir).test_client()
     body = client.get("/library").get_data(as_text=True)
     assert "seed_library" in body  # tab label
-    assert "drawer_closed" in body  # predicate truth procedure
+    assert STUB_GROUNDING_PLAN.factory_uid in body  # predicate truth procedure
     assert "articulation.state-transition" in body  # contract label
     assert "StateTransition" in body  # ontology alignment
     assert "open-drawer" in body and "resym:Articulation@1" in body  # binding
@@ -739,12 +739,12 @@ def test_system_library_page_shows_versioned_predicate_references(tmp_path):
         PredicateSymbol(
             name="closed",
             parameter_types=(DRAWER_TYPE,),
-            evaluator="drawer_closed",
             fluent=True,
+            grounding_plan=STUB_GROUNDING_PLAN,
             uid="soma:Closed",
             version="2",
             truth_procedure_ref=TruthProcedureRef(
-                "resym:truth-procedure/registry/drawer_closed", "3"
+                "resym:truth-procedure/query/closed", "3"
             ),
         )
     )
@@ -775,7 +775,7 @@ def test_system_library_page_shows_versioned_predicate_references(tmp_path):
     )
 
     assert "soma:Closed@2" in body
-    assert "resym:truth-procedure/registry/drawer_closed@3" in body
+    assert "resym:truth-procedure/query/closed@3" in body
     assert "soma:Opened" in body and ">opened<" in body
 
 
@@ -785,7 +785,6 @@ def test_system_library_page_shows_predicate_grounding_plan(tmp_path):
         PredicateSymbol(
             name="closed",
             parameter_types=(DRAWER_TYPE,),
-            evaluator=GROUNDING_PLAN_EVALUATOR_KEY,
             fluent=True,
             grounding_plan=PredicateGroundingPlan(
                 factory_uid="resym:grounding/joint-fraction-opened",

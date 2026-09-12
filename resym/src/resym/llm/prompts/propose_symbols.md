@@ -16,9 +16,6 @@ $predicates
 ## Operators already in the library (name, parameters, preconditions -> effects)
 $operators
 
-## Truth procedures you may reference as predicate `evaluator`
-$evaluators
-
 ## Reviewed predicate queries and grounding factories
 $predicate_queries
 
@@ -43,10 +40,9 @@ $types
   clears a field. New operators require the complete definition shown below.
 - Every literal in an operator must use that operator's parameter variables.
 - Every predicate you reference must exist in the library or in your proposal.
-- For each new predicate, select one listed legacy `evaluator`, or provide a
-  `grounding_plan` that names a reviewed factory, its checksum, role-to-argument
-  positions, explicit parameters, and optional `negated` flag. Do not provide
-  both.
+- For each new predicate, provide a `grounding_plan` that names a reviewed
+  factory, its checksum, role-to-argument positions, explicit parameters, and
+  optional `negated` flag.
   When it realizes an effect a capability contract lists by stable id, also
   set `uid` to that id so the alignment survives a different local name.
 - If none of the reviewed predicate queries can ground a
@@ -56,7 +52,8 @@ $types
 Reply with ONLY a JSON document of this shape:
 {
   "rationale": "<why these symbols realize the request>",
-  "predicates": [{"name": "...", "parameter_types": ["robot"], "evaluator": "...", "fluent": true}],
+  "predicates": [{"name": "...", "parameter_types": ["robot"], "fluent": true,
+    "grounding_plan": {"factory_uid": "...", "approved_factory_checksum": "...", "role_bindings": {"actor": 0}}}],
   "operators": [{
     "name": "...",
     "parameters": [{"variable": "r", "type": "robot"}],

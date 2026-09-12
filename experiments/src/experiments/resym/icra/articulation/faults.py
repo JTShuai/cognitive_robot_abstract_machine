@@ -49,6 +49,10 @@ from resym.platform.capabilities import (
     ARTICULATION_CAPABILITY_UID,
     NAVIGATION_CAPABILITY_UID,
 )
+from resym.platform.feasibility import feasibility_factory_uid
+from resym.platform.grounding_catalog import GroundingFactoryCatalog
+
+from experiments.resym.seed_library import build_grounding_plan
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Drawer
 
@@ -142,7 +146,10 @@ class UnknownTemplateSymbolError(Exception):
         )
 
 
-def drawer_fault_templates(correct: SymbolLibrary) -> tuple[FaultTemplate, ...]:
+def drawer_fault_templates(
+    correct: SymbolLibrary,
+    grounding_catalog: GroundingFactoryCatalog,
+) -> tuple[FaultTemplate, ...]:
     """The drawer-domain template set over the correct fixed-arm library.
 
     Ground-truth patches are built from the correct library itself, so a
@@ -430,21 +437,28 @@ def drawer_fault_templates(correct: SymbolLibrary) -> tuple[FaultTemplate, ...]:
                 repair=None,
                 unsupported=True,
             ),
-            transform=_add_navigation_model,
+            transform=_add_navigation_model(grounding_catalog),
         ),
         FaultTemplate(
-            identifier="broken-evaluator-binding",
+            identifier="broken-grounding-binding",
             group="D3",
-            description="'opened' references an evaluator that no embodiment registers",
+            description="'opened' references a grounding factory that no "
+            "reviewed catalog provides",
             task=FaultTask(goal_predicate="opened"),
             manifestation=Manifestation.STATIC_REFUSAL,
             ground_truth=GroundTruth(
-                label="broken-evaluator-binding",
+                label="broken-grounding-binding",
                 expected_certificate_classes=("predicate_implementation_error",),
                 repair=repair(predicates=(opened,)),
                 curation_expected=True,
             ),
-            transform=replace_predicate("opened", evaluator="drawer_opened_v2"),
+            transform=replace_predicate(
+                "opened",
+                grounding_plan=dataclasses.replace(
+                    opened.grounding_plan,
+                    factory_uid=f"{opened.grounding_plan.factory_uid}-v2",
+                ),
+            ),
         ),
         FaultTemplate(
             identifier="combined-missing-close-and-delete-effect",
@@ -513,34 +527,42 @@ def _replace_contract(capability_uid: str, **changes):
     return transform
 
 
-def _add_navigation_model(library: SymbolLibrary) -> SymbolLibrary:
-    """Turn the library into its mobile-embodiment shape: reachability is
-    achieved by navigating to a sampled witness pose."""
-    library.add(
-        PredicateSymbol(
-            name="openable",
-            parameter_types=(ROBOT_TYPE, DRAWER_TYPE),
-            evaluator="openable",
-            fluent=False,
-        )
-    )
-    library.add(
-        Operator(
-            name="navigate",
-            parameters=(("r", ROBOT_TYPE), ("d", DRAWER_TYPE)),
-            preconditions=(Literal("openable", ("r", "d")),),
-            add_effects=(Literal("ready-to-open", ("r", "d")),),
-            delete_effects=(),
-            execution_binding=OperatorExecutionBinding(
-                CapabilityRef(NAVIGATION_CAPABILITY_UID),
-                (
-                    ("actor", RoleBinding.parameter("r")),
-                    ("patient", RoleBinding.parameter("d")),
+def _add_navigation_model(grounding_catalog: GroundingFactoryCatalog):
+    """Transform turning the library into its mobile-embodiment shape:
+    reachability is achieved by navigating to a sampled witness pose."""
+
+    def transform(library: SymbolLibrary) -> SymbolLibrary:
+        library.add(
+            PredicateSymbol(
+                name="openable",
+                parameter_types=(ROBOT_TYPE, DRAWER_TYPE),
+                fluent=False,
+                grounding_plan=build_grounding_plan(
+                    grounding_catalog,
+                    feasibility_factory_uid(NAVIGATION_CAPABILITY_UID),
+                    (("actor", 0), ("patient", 1)),
                 ),
-            ),
+            )
         )
-    )
-    return library
+        library.add(
+            Operator(
+                name="navigate",
+                parameters=(("r", ROBOT_TYPE), ("d", DRAWER_TYPE)),
+                preconditions=(Literal("openable", ("r", "d")),),
+                add_effects=(Literal("ready-to-open", ("r", "d")),),
+                delete_effects=(),
+                execution_binding=OperatorExecutionBinding(
+                    CapabilityRef(NAVIGATION_CAPABILITY_UID),
+                    (
+                        ("actor", RoleBinding.parameter("r")),
+                        ("patient", RoleBinding.parameter("d")),
+                    ),
+                ),
+            )
+        )
+        return library
+
+    return transform
 
 
 def _opposite_target_binding(

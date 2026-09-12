@@ -626,7 +626,6 @@ def coraplex_embodiment_profile(
     *,
     name: str,
     robot: AbstractRobot,
-    evaluators: Iterable[str],
     tool_orientation,
     ready_capability_uids: Iterable[str] = (),
     adapter_capability_uids: Iterable[str] | None = None,
@@ -643,7 +642,6 @@ def coraplex_embodiment_profile(
     )
     return EmbodimentProfile(
         name=name,
-        evaluators=frozenset(evaluators),
         capabilities=frozenset(item.capability_uid for item in support if item.ready),
         capability_sources=tuple(
             (item.capability_uid, item.action_source_ids)

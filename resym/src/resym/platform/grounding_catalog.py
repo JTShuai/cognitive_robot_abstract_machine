@@ -18,29 +18,25 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
 
 from krrood.adapters.json_serializer import from_json, to_json
 
+from resym.core.capabilities import CapabilityContract
 from resym.core.grounding import (
     GroundingFactoryCandidate,
     GroundingFactoryOrigin,
     GroundingFactoryParameter,
-    GroundingFactoryParameterType,
+    GroundingFactoryProcedure,
     GroundingFactoryReviewStatus,
-    GroundingFactoryRole,
     GroundingFactorySpec,
+    text_checksum as _text_checksum,
 )
-from resym.platform.articulation import articulation_connection
-from resym.platform.evaluators import EVALUATOR_SPECS, EVALUATORS
-from resym.platform.universe import joint_fraction
+from resym.platform.feasibility import (
+    FEASIBILITY_FACTORY_NAMESPACE,
+    capability_feasibility_factories,
+)
 
 LOCAL_FACTORY_PACKAGE = "resym_local_grounding_factories"
-PLATFORM_REVIEWER = "platform-maintainer"
-
-GroundingFactoryProcedure = Callable[
-    [Any, Any, tuple[Any, ...], Mapping[str, object]], bool
-]
 
 
 # %% Source discovery
@@ -54,6 +50,7 @@ class GroundingVocabularyKind(StrEnum):
     EQL_FACTORY = "eql-factory"
     SYMBOLIC_FUNCTION = "symbolic-function"
     PREDICATE = "predicate"
+    QUERY_HELPER = "query-helper"
 
 
 @dataclass(frozen=True)
@@ -86,6 +83,9 @@ class GroundingVocabularyEntry:
     """
     Hash of the discovered source file.
     """
+
+    documentation: str = ""
+    """Source docstring shown during semantic review and Agent drafting."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "kind", GroundingVocabularyKind(self.kind))
@@ -134,6 +134,11 @@ class GroundingVocabulary:
         """
         return "\n".join(
             f"- {entry.qualified_name}{entry.signature}: {entry.kind.value}"
+            + (
+                f" — {entry.documentation.splitlines()[0]}"
+                if entry.documentation
+                else ""
+            )
             for entry in self.entries
         )
 
@@ -166,6 +171,12 @@ class GroundingVocabularyCandidate:
     Optional explanation supplied with the decision.
     """
 
+    discovery_scope: str = "default"
+    """
+    Scanner namespace that owns this record. Synchronizing one source must not
+    erase review decisions produced by another source.
+    """
+
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
@@ -182,7 +193,7 @@ def discover_grounding_vocabulary(
 
     The scanner parses source without importing robot or ROS modules.
     """
-    entries: list[GroundingVocabularyEntry] = []
+    entries: dict[str, GroundingVocabularyEntry] = {}
     for root_module, root_path in sorted(package_roots.items()):
         for module_name, source_file in _python_modules(root_module, root_path):
             source = source_file.read_text(encoding="utf-8")
@@ -192,15 +203,40 @@ def discover_grounding_vocabulary(
                 kind = _vocabulary_kind(module_name, node)
                 if kind is None:
                     continue
-                entries.append(
-                    GroundingVocabularyEntry(
-                        qualified_name=f"{module_name}.{node.name}",
-                        kind=kind,
-                        signature=_source_signature(node),
-                        source_file=str(source_file),
-                        source_checksum=checksum,
-                    )
+                entry = GroundingVocabularyEntry(
+                    qualified_name=f"{module_name}.{node.name}",
+                    kind=kind,
+                    signature=_source_signature(node),
+                    source_file=str(source_file),
+                    source_checksum=checksum,
+                    documentation=ast.get_docstring(node) or "",
                 )
+                entries[entry.qualified_name] = entry
+    return GroundingVocabulary(
+        tuple(sorted(entries.values(), key=lambda entry: entry.qualified_name))
+    )
+
+
+def helper_vocabulary(functions: Iterable[Callable]) -> GroundingVocabulary:
+    """
+    Vocabulary entries for explicitly chosen query-helper callables.
+
+    Each entry pins the checksum of the helper's current module source, so the normal
+    vocabulary review flow decides whether candidates may import it.
+    """
+    entries = []
+    for function in functions:
+        source_file = Path(inspect.getsourcefile(function))
+        entries.append(
+            GroundingVocabularyEntry(
+                qualified_name=f"{function.__module__}.{function.__name__}",
+                kind=GroundingVocabularyKind.QUERY_HELPER,
+                signature=str(inspect.signature(function)),
+                source_file=str(source_file),
+                source_checksum=_text_checksum(source_file.read_text(encoding="utf-8")),
+                documentation=inspect.getdoc(function) or "",
+            )
+        )
     return GroundingVocabulary(
         tuple(sorted(entries, key=lambda entry: entry.qualified_name))
     )
@@ -376,6 +412,13 @@ class GroundingFactorySourceValidator:
                 )
             if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
                 raise GroundingFactorySourceError("dunder access is not allowed")
+        returns = [node for node in ast.walk(function) if isinstance(node, ast.Return)]
+        if not returns or any(
+            not _is_boolean_expression(node.value) for node in returns
+        ):
+            raise GroundingFactorySourceError(
+                "every factory return must be statically Boolean"
+            )
 
     def _validate_calls(self, tree: ast.Module) -> None:
         imported_names = {
@@ -470,23 +513,48 @@ class GroundingFactoryWorkspace:
         """
         return self.root / "grounding_vocabulary.json"
 
-    def synchronize_vocabulary(self, discovered: GroundingVocabulary) -> None:
+    def synchronize_vocabulary(
+        self,
+        discovered: GroundingVocabulary,
+        discovery_scope: str = "default",
+    ) -> None:
         """
         Update the review queue while preserving unchanged decisions.
         """
+        records = self.vocabulary_candidates()
+        discovered_names = {entry.qualified_name for entry in discovered.entries}
         existing = {
-            item.entry.qualified_name: item for item in self.vocabulary_candidates()
+            item.entry.qualified_name: item
+            for item in records
+            if item.discovery_scope == discovery_scope
+            or item.entry.qualified_name in discovered_names
         }
-        synchronized = []
+        synchronized = [
+            item
+            for item in records
+            if item.discovery_scope != discovery_scope
+            and item.entry.qualified_name not in discovered_names
+        ]
         for entry in discovered.entries:
             previous = existing.get(entry.qualified_name)
             if (
                 previous is not None
                 and previous.entry.source_checksum == entry.source_checksum
             ):
-                synchronized.append(replace(previous, entry=entry))
+                synchronized.append(
+                    replace(
+                        previous,
+                        entry=entry,
+                        discovery_scope=discovery_scope,
+                    )
+                )
             else:
-                synchronized.append(GroundingVocabularyCandidate(entry=entry))
+                synchronized.append(
+                    GroundingVocabularyCandidate(
+                        entry=entry,
+                        discovery_scope=discovery_scope,
+                    )
+                )
         self.root.mkdir(parents=True, exist_ok=True)
         self.vocabulary_review_path.write_text(
             json.dumps(
@@ -635,10 +703,10 @@ class GroundingFactoryWorkspace:
         candidate = self._candidate(candidate_id)
         if candidate.review_status != GroundingFactoryReviewStatus.PENDING_REVIEW:
             raise GroundingFactorySourceError("candidate already has a review decision")
-        if candidate.proposed_uid in platform_factory_uids():
+        if candidate.proposed_uid.startswith(FEASIBILITY_FACTORY_NAMESPACE):
             raise GroundingFactoryUidConflictError(
-                f"factory uid '{candidate.proposed_uid}' is owned by a "
-                "platform factory"
+                f"factory uid '{candidate.proposed_uid}' lies in the reserved "
+                "capability-feasibility namespace"
             )
         GroundingFactorySourceValidator(vocabulary).validate(candidate.source_code)
         _validate_candidate_interface(candidate)
@@ -669,6 +737,9 @@ class GroundingFactoryWorkspace:
             approved_at=datetime.now(UTC).isoformat(),
             active_revision_id=f"r{revision:04d}",
             parameters=candidate.parameters,
+            dependency_checksums=_candidate_dependency_checksums(
+                candidate.source_code, vocabulary
+            ),
         )
         existing[specification.uid] = specification
         self._write_catalog(existing.values())
@@ -715,12 +786,31 @@ class GroundingFactoryWorkspace:
         source_file = self._approved_source_file(specification)
         if not source_file.is_file():
             return f"factory '{specification.uid}' source file is missing"
+        if not specification.dependency_checksums and _source_imports_dependencies(
+            source_file.read_text(encoding="utf-8")
+        ):
+            return (
+                f"factory '{specification.uid}' predates dependency pinning and "
+                "requires review"
+            )
         actual_checksum = _file_checksum(source_file)
         if actual_checksum != specification.implementation_checksum:
             return (
                 f"factory '{specification.uid}' source changed from "
                 f"{specification.implementation_checksum} to {actual_checksum}"
             )
+        for qualified_name, expected_checksum in specification.dependency_checksums:
+            actual_checksum = _qualified_name_source_checksum(qualified_name)
+            if actual_checksum is None:
+                return (
+                    f"factory '{specification.uid}' dependency "
+                    f"'{qualified_name}' is missing"
+                )
+            if actual_checksum != expected_checksum:
+                return (
+                    f"factory '{specification.uid}' dependency '{qualified_name}' "
+                    f"changed from {expected_checksum} to {actual_checksum}"
+                )
         return None
 
     def load_procedure(
@@ -837,6 +927,16 @@ class GroundingFactoryCatalog:
     Reason each currently unresolvable factory identity cannot be used.
     """
 
+    _workspace: GroundingFactoryWorkspace | None = field(default=None, repr=False)
+    """
+    Review workspace backing locally approved factories, when one was loaded.
+    """
+
+    @property
+    def workspace(self) -> GroundingFactoryWorkspace | None:
+        """Local review workspace available to an application repair loop."""
+        return self._workspace
+
     def __iter__(self) -> Iterator[GroundingFactorySpec]:
         return iter(sorted(self._specifications.values(), key=lambda item: item.uid))
 
@@ -852,15 +952,24 @@ class GroundingFactoryCatalog:
         cls,
         workspace: GroundingFactoryWorkspace | None = None,
         shared_specifications: Iterable[GroundingFactorySpec] = (),
+        capability_contracts: Iterable[CapabilityContract] = (),
+        capability_feasibility_implementations: Mapping[str, Callable] | None = None,
     ) -> GroundingFactoryCatalog:
         """
         Load the unified catalog with duplicate identities rejected.
 
-        A locally approved factory whose materialized source drifted from its reviewed
-        checksum is marked unavailable instead of failing the load.
+        The platform contributes no factories of its own: every entry is a
+        locally approved implementation, a shared reviewed specification, or a
+        feasibility factory derived from a reviewed capability contract that has a
+        concrete platform feasibility implementation. A
+        locally approved factory whose materialized source drifted from its
+        reviewed checksum is marked unavailable instead of failing the load.
         """
-        catalog = cls({}, {})
-        for specification, procedure in _platform_factories():
+        catalog = cls({}, {}, _workspace=workspace)
+        for specification, procedure in capability_feasibility_factories(
+            capability_contracts,
+            capability_feasibility_implementations,
+        ):
             catalog._add(specification, procedure)
         if workspace is not None:
             for specification in workspace.specifications():
@@ -870,9 +979,15 @@ class GroundingFactoryCatalog:
                     continue
                 catalog._add(specification, workspace.load_procedure(specification))
         for specification in shared_specifications:
-            catalog._add(
-                specification, _import_function(specification.implementation_ref)
-            )
+            procedure = _import_function(specification.implementation_ref)
+            actual_checksum = _callable_source_checksum(procedure)
+            if actual_checksum != specification.implementation_checksum:
+                catalog._unavailable[specification.uid] = (
+                    f"shared factory '{specification.uid}' source changed from "
+                    f"{specification.implementation_checksum} to {actual_checksum}"
+                )
+                continue
+            catalog._add(specification, procedure)
         return catalog
 
     def specification(self, uid: str) -> GroundingFactorySpec:
@@ -1016,6 +1131,8 @@ class GroundingFactoryInitialization:
 def initialize_grounding_factories(
     workspace_root: Path,
     package_roots: Mapping[str, Path] | None = None,
+    capability_contracts: Iterable[CapabilityContract] = (),
+    capability_feasibility_implementations: Mapping[str, Callable] | None = None,
 ) -> GroundingFactoryInitialization:
     """
     Scan query sources, update their review queue, and load approved factories.
@@ -1026,12 +1143,18 @@ def initialize_grounding_factories(
         else discover_grounding_vocabulary(package_roots)
     )
     workspace = GroundingFactoryWorkspace(workspace_root)
-    workspace.synchronize_vocabulary(discovered)
+    workspace.synchronize_vocabulary(discovered, discovery_scope="platform-default")
     return GroundingFactoryInitialization(
         workspace=workspace,
         discovered_vocabulary=discovered,
         reviewed_vocabulary=workspace.reviewed_vocabulary(),
-        catalog=GroundingFactoryCatalog.load(workspace=workspace),
+        catalog=GroundingFactoryCatalog.load(
+            workspace=workspace,
+            capability_contracts=capability_contracts,
+            capability_feasibility_implementations=(
+                capability_feasibility_implementations
+            ),
+        ),
     )
 
 
@@ -1071,6 +1194,8 @@ def freeze_grounding_factories(
     workspace: GroundingFactoryWorkspace,
     output_directory: Path,
     symbol_library: Path,
+    capability_contracts: Iterable[CapabilityContract] = (),
+    capability_feasibility_implementations: Mapping[str, Callable] | None = None,
     git_commits: tuple[tuple[str, str], ...] = (),
     package_versions: tuple[tuple[str, str], ...] = (),
     container_image_digest: str | None = None,
@@ -1083,10 +1208,12 @@ def freeze_grounding_factories(
         raise FileExistsError(output_directory)
     output_directory.mkdir(parents=True)
     source_bundle = output_directory / "factory_source_bundle"
+    source_bundle.mkdir()
     if workspace.approved_package_directory.is_dir():
-        shutil.copytree(workspace.approved_package_directory, source_bundle)
-    else:
-        source_bundle.mkdir()
+        shutil.copytree(
+            workspace.approved_package_directory,
+            source_bundle / LOCAL_FACTORY_PACKAGE,
+        )
     review_metadata = output_directory / "review_metadata"
     review_metadata.mkdir()
     for source in (
@@ -1098,7 +1225,13 @@ def freeze_grounding_factories(
     frozen_catalog = output_directory / "grounding_factory_catalog.json"
     frozen_catalog.write_text(
         json.dumps(
-            GroundingFactoryCatalog.load(workspace=workspace).to_json(),
+            GroundingFactoryCatalog.load(
+                workspace=workspace,
+                capability_contracts=capability_contracts,
+                capability_feasibility_implementations=(
+                    capability_feasibility_implementations
+                ),
+            ).to_json(),
             indent=2,
             sort_keys=True,
         ),
@@ -1156,6 +1289,8 @@ def _vocabulary_kind(
 ) -> GroundingVocabularyKind | None:
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         decorators = {_terminal_name(item) for item in node.decorator_list}
+        if "overload" in decorators:
+            return None
         if "symbolic_function" in decorators:
             return GroundingVocabularyKind.SYMBOLIC_FUNCTION
         if (
@@ -1187,13 +1322,46 @@ def _source_signature(
 ) -> str:
     if isinstance(node, ast.ClassDef):
         return ""
-    arguments = ", ".join(argument.arg for argument in node.args.args)
-    return f"({arguments})"
+    positional = list(node.args.posonlyargs) + list(node.args.args)
+    default_offset = len(positional) - len(node.args.defaults)
+    arguments = []
+    for index, argument in enumerate(positional):
+        rendered = argument.arg
+        if argument.annotation is not None:
+            rendered += f": {ast.unparse(argument.annotation)}"
+        if index >= default_offset:
+            rendered += f" = {ast.unparse(node.args.defaults[index - default_offset])}"
+        arguments.append(rendered)
+    if node.args.vararg is not None:
+        arguments.append(f"*{node.args.vararg.arg}")
+    arguments.extend(
+        f"{argument.arg}"
+        + (f" = {ast.unparse(default)}" if default is not None else "")
+        for argument, default in zip(node.args.kwonlyargs, node.args.kw_defaults)
+    )
+    if node.args.kwarg is not None:
+        arguments.append(f"**{node.args.kwarg.arg}")
+    returns = f" -> {ast.unparse(node.returns)}" if node.returns is not None else ""
+    return f"({', '.join(arguments)}){returns}"
 
 
 def _tree_depth(node: ast.AST) -> int:
     children = tuple(ast.iter_child_nodes(node))
     return 1 if not children else 1 + max(_tree_depth(child) for child in children)
+
+
+def _is_boolean_expression(node: ast.expr | None) -> bool:
+    if isinstance(node, ast.Constant):
+        return type(node.value) is bool
+    if isinstance(node, (ast.Compare, ast.BoolOp)):
+        return True
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        return True
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "bool"
+    )
 
 
 def _validate_candidate_interface(candidate: GroundingFactoryCandidate) -> None:
@@ -1232,107 +1400,27 @@ def _render_parameter(parameter: GroundingFactoryParameter) -> str:
     return f"{parameter.name}{required}:{parameter.value_type.value}{bounds}"
 
 
-def platform_factory_uids() -> frozenset[str]:
-    """
-    Factory identities owned by the built-in platform implementations.
-    """
-    return frozenset(specification.uid for specification, _ in _platform_factories())
+def _candidate_dependency_checksums(
+    source_code: str, vocabulary: GroundingVocabulary
+) -> tuple[tuple[str, str], ...]:
+    """Pin every reviewed symbol imported by a materialized candidate."""
+    approved = {entry.qualified_name: entry for entry in vocabulary.entries}
+    dependencies: dict[str, str] = {}
+    tree = ast.parse(source_code)
+    for node in tree.body:
+        if not isinstance(node, ast.ImportFrom) or node.module in (None, "__future__"):
+            continue
+        for alias in node.names:
+            qualified_name = f"{node.module}.{alias.name}"
+            dependencies[qualified_name] = approved[qualified_name].source_checksum
+    return tuple(sorted(dependencies.items()))
 
 
-def _platform_factories() -> (
-    tuple[tuple[GroundingFactorySpec, GroundingFactoryProcedure], ...]
-):
-    definitions = {
-        "drawer_opened": (
-            "resym:grounding/joint-fraction-opened",
-            _joint_fraction_opened,
-            ("articulated_object",),
-        ),
-        "handle_of": (
-            "resym:grounding/interaction-point-of",
-            _interaction_point_of,
-            ("interaction_point", "articulated_object"),
-        ),
-        "ready_to_open": (
-            "resym:grounding/reachable-from-current-base",
-            _reachable_from_current_base,
-            ("actor", "articulated_object"),
-        ),
-        "openable": (
-            "resym:grounding/reachable-from-sampled-base",
-            _reachable_from_sampled_base,
-            ("actor", "articulated_object"),
-        ),
-    }
-    entries = []
-    for name, (uid, procedure, role_names) in definitions.items():
-        checksum = _text_checksum(
-            inspect.getsource(procedure) + inspect.getsource(EVALUATORS[name])
-        )
-        specification = GroundingFactorySpec(
-            uid=uid,
-            semantic_name=uid.rsplit("/", 1)[1],
-            implementation_ref=f"{procedure.__module__}:{procedure.__name__}",
-            implementation_checksum=checksum,
-            roles=tuple(
-                GroundingFactoryRole(role_name, symbol_type)
-                for role_name, symbol_type in zip(
-                    role_names, EVALUATOR_SPECS[name].parameter_types
-                )
-            ),
-            origin=GroundingFactoryOrigin.PLATFORM,
-            reviewed_by=PLATFORM_REVIEWER,
-            approved_at="platform-release",
-            active_revision_id=f"r-{checksum[:12]}",
-            parameters=(
-                (
-                    GroundingFactoryParameter(
-                        name="threshold",
-                        value_type=GroundingFactoryParameterType.NUMBER,
-                        minimum=0.0,
-                        maximum=1.0,
-                    ),
-                )
-                if name == "drawer_opened"
-                else ()
-            ),
-        )
-        entries.append((specification, procedure))
-    return tuple(entries)
-
-
-def _joint_fraction_opened(context, universe, arguments, parameters) -> bool:
-    """
-    Evaluate the reviewed articulation-state query.
-    """
-    if "threshold" not in parameters:
-        return EVALUATORS["drawer_opened"](context, universe, arguments)
-    (articulated_object,) = arguments
-    return bool(
-        joint_fraction(articulation_connection(articulated_object))
-        >= float(parameters["threshold"])
+def _source_imports_dependencies(source_code: str) -> bool:
+    return any(
+        isinstance(node, ast.ImportFrom) and node.module not in (None, "__future__")
+        for node in ast.parse(source_code).body
     )
-
-
-def _interaction_point_of(context, universe, arguments, parameters) -> bool:
-    """
-    Evaluate the reviewed interaction-point relation.
-    """
-    return EVALUATORS["handle_of"](context, universe, arguments)
-
-
-def _reachable_from_current_base(context, universe, arguments, parameters) -> bool:
-    """
-    Evaluate reachability without changing the robot base.
-    """
-    return EVALUATORS["ready_to_open"](context, universe, arguments)
-
-
-def _reachable_from_sampled_base(context, universe, arguments, parameters) -> bool:
-    """
-    Evaluate reachability while permitting a sampled base pose.
-    """
-    return EVALUATORS["openable"](context, universe, arguments)
 
 
 def _load_function(
@@ -1363,8 +1451,22 @@ def _import_function(implementation_ref: str) -> GroundingFactoryProcedure:
     return procedure
 
 
-def _text_checksum(text: str) -> str:
-    return hashlib.sha256(text.encode()).hexdigest()
+def _qualified_name_source_checksum(qualified_name: str) -> str | None:
+    module_name, _ = qualified_name.rsplit(".", 1)
+    specification = importlib.util.find_spec(module_name)
+    if specification is None or specification.origin is None:
+        return None
+    source_file = Path(specification.origin)
+    return _file_checksum(source_file) if source_file.is_file() else None
+
+
+def _callable_source_checksum(procedure: Callable) -> str:
+    source_file = inspect.getsourcefile(procedure)
+    if source_file is None:
+        raise GroundingFactoryCatalogError(
+            f"Cannot locate reviewed source for '{procedure}'."
+        )
+    return _file_checksum(Path(source_file))
 
 
 def _file_checksum(path: Path) -> str:

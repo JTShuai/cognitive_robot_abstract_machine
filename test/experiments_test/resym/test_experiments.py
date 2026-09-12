@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from functools import partial
 from types import SimpleNamespace
 
 import pytest
@@ -63,17 +64,8 @@ from resym.repair.versioning import VersionedLibraryStore
 
 # -- the symbolic drawer world -----------------------------------------
 
-KNOWN_EVALUATORS = frozenset(
-    {
-        "handle_of",
-        "drawer_closed",
-        "drawer_opened",
-        "ready_to_open",
-    }
-)
 AVAILABLE_CAPABILITIES = frozenset({ARTICULATION_CAPABILITY_UID})
 CORRECT_TARGET_STATE = {"opened": "OPEN", "closed": "CLOSED"}
-CORRECT_EVALUATOR = {"opened": "drawer_opened", "closed": "drawer_closed"}
 
 
 def outcome(succeeded, failure_class=None, goal="closed", plan=()):
@@ -93,7 +85,7 @@ def outcome(succeeded, failure_class=None, goal="closed", plan=()):
     )
 
 
-def simulate(library, goal, reachable=True):
+def simulate(catalog, library, goal, reachable=True):
     """
     The closed loop in miniature, mirroring the real semantics: the static capability
     gate over the goal-relevant selection closure, then a wrong truth binding claims the
@@ -105,17 +97,20 @@ def simulate(library, goal, reachable=True):
         selection = select_for_goal(library, (Literal(goal, ("d1",)),))
     except UnknownPredicateError:
         return outcome(False, "missing_predicate_model", goal)
-    unsupported = any(
-        predicate.implementation.evaluator_key not in KNOWN_EVALUATORS
-        for predicate in selection.predicates.values()
-    ) or any(
+    if any(
         operator.execution_binding.capability_ref.uid not in AVAILABLE_CAPABILITIES
         for operator in selection.operators.values()
-    )
-    if unsupported:
+    ):
         return outcome(False, "unsupported_capability", goal)
+    known_factory_uids = {specification.uid for specification in catalog}
+    if any(
+        predicate.grounding_plan.factory_uid not in known_factory_uids
+        for predicate in selection.predicates.values()
+    ):
+        return outcome(False, "predicate_implementation_error", goal)
     predicate = library.predicates[goal]
-    if predicate.evaluator != CORRECT_EVALUATOR[goal]:
+    correct_plan = build_fixed_arm_library(catalog).predicates[goal].grounding_plan
+    if predicate.grounding_plan != correct_plan:
         return outcome(True, goal=goal, plan=())  # claimed satisfied, no action
     achiever = next(
         (
@@ -140,15 +135,7 @@ def simulate(library, goal, reachable=True):
     return outcome(True, goal=goal, plan=(achiever.name,))
 
 
-def fake_runner(library, task, variation, working_directory):
-    return simulate(library, task.goal_predicate, reachable=task.on_mounted_drawer)
-
-
-def fake_safety_runner(library, task, variation, working_directory):
-    return simulate(library, task.goal_predicate, reachable=False)
-
-
-def behavioural_tests(template, cases, vacuous_beyond_positive=False):
+def behavioural_tests(catalog, template, cases, vacuous_beyond_positive=False):
     """
     The four mandatory groups as symbolic probes; ``vacuous_beyond_positive`` models a
     box-ticking admission suite whose non-positive groups pass everything (coverage
@@ -156,7 +143,7 @@ def behavioural_tests(template, cases, vacuous_beyond_positive=False):
     """
     goal = template.task.goal_predicate
     reverse_goal = "closed" if goal == "opened" else "opened"
-    faulted = template.apply(build_fixed_arm_library())
+    faulted = template.apply(build_fixed_arm_library(catalog))
     reverse_worked_before = reverse_goal in faulted.predicates and any(
         any(e.predicate == reverse_goal for e in operator.add_effects)
         for operator in faulted.operators.values()
@@ -166,7 +153,7 @@ def behavioural_tests(template, cases, vacuous_beyond_positive=False):
         return f"{template.identifier}/scene-{case.variation.seed}"
 
     def positive(candidate):
-        result = simulate(candidate, goal, reachable=True)
+        result = simulate(catalog, candidate, goal, reachable=True)
         return (
             []
             if result.succeeded
@@ -174,11 +161,11 @@ def behavioural_tests(template, cases, vacuous_beyond_positive=False):
         )
 
     def negative(candidate):
-        result = simulate(candidate, goal, reachable=False)
+        result = simulate(catalog, candidate, goal, reachable=False)
         return ["claimed success out of reach"] if result.succeeded else []
 
     def boundary(candidate):
-        result = simulate(candidate, goal, reachable=True)
+        result = simulate(catalog, candidate, goal, reachable=True)
         if result.succeeded and not result.result.plan:
             return ["claimed satisfied at the boundary without acting"]
         return []
@@ -186,7 +173,7 @@ def behavioural_tests(template, cases, vacuous_beyond_positive=False):
     def regression(candidate):
         if not reverse_worked_before:
             return []
-        result = simulate(candidate, reverse_goal, reachable=True)
+        result = simulate(catalog, candidate, reverse_goal, reachable=True)
         return (
             []
             if result.succeeded
@@ -224,34 +211,46 @@ def behavioural_tests(template, cases, vacuous_beyond_positive=False):
     )
 
 
-def fake_bench(weak_admission=False):
+def fake_bench(catalog, weak_admission=False):
     def curator_builder(template, cases, proposal_context_id, working_directory):
         return BehaviouralCurator(
-            known_evaluators=KNOWN_EVALUATORS,
             available_capabilities=AVAILABLE_CAPABILITIES,
+            grounding_factory_specs={
+                specification.uid: specification for specification in catalog
+            },
             suite=MandatorySuite(
                 version="fake-suite-1",
                 tests=behavioural_tests(
-                    template, cases, vacuous_beyond_positive=weak_admission
+                    catalog, template, cases, vacuous_beyond_positive=weak_admission
                 ),
             ),
         )
 
     def held_out(template, cases, candidate, working_directory):
         failures = []
-        for test in behavioural_tests(template, cases):
+        for test in behavioural_tests(catalog, template, cases):
             failures.extend(
                 f"[{test.group.value}] {failure}" for failure in test.run(candidate)
             )
         return failures
 
+    def fake_runner(library, task, variation, working_directory):
+        return simulate(
+            catalog, library, task.goal_predicate, reachable=task.on_mounted_drawer
+        )
+
+    def fake_safety_runner(library, task, variation, working_directory):
+        return simulate(catalog, library, task.goal_predicate, reachable=False)
+
     return ExperimentBench(
-        correct_library=build_fixed_arm_library,
+        correct_library=partial(build_fixed_arm_library, catalog),
         runner=fake_runner,
         curator_builder=curator_builder,
         held_out=held_out,
         safety_runner=fake_safety_runner,
-        evaluator_listing="\n".join(f"- {n}" for n in sorted(KNOWN_EVALUATORS)),
+        grounding_factory_listing="\n".join(
+            sorted(specification.uid for specification in catalog)
+        ),
         capability_listing="\n".join(f"- {n}" for n in sorted(AVAILABLE_CAPABILITIES)),
     )
 
@@ -276,22 +275,34 @@ class ScriptedPatchBackend(RepairBackend):
 
 
 @pytest.fixture(scope="module")
-def templates():
-    return {t.identifier: t for t in drawer_fault_templates(build_fixed_arm_library())}
+def templates(grounding_catalog):
+    return {
+        t.identifier: t
+        for t in drawer_fault_templates(
+            build_fixed_arm_library(grounding_catalog), grounding_catalog
+        )
+    }
 
 
 @pytest.fixture(scope="module")
-def cases():
-    return generate_splits(drawer_fault_templates(build_fixed_arm_library()), seed=1)
+def cases(grounding_catalog):
+    return generate_splits(
+        drawer_fault_templates(
+            build_fixed_arm_library(grounding_catalog), grounding_catalog
+        ),
+        seed=1,
+    )
 
 
 # -- E1 -----------------------------------------------------------------
 
 
-def test_e1_refuses_to_reuse_proposal_contexts(templates, cases, tmp_path):
+def test_e1_refuses_to_reuse_proposal_contexts(
+    templates, cases, tmp_path, grounding_catalog
+):
     with pytest.raises(ValueError, match="only 4 independent proposal contexts"):
         run_e1(
-            fake_bench(),
+            fake_bench(grounding_catalog),
             backends={},
             templates=[templates["missing-close-operator"]],
             cases=cases,
@@ -301,10 +312,10 @@ def test_e1_refuses_to_reuse_proposal_contexts(templates, cases, tmp_path):
 
 
 def test_oracle_reference_is_a_correct_repair_and_no_repair_is_not(
-    templates, cases, tmp_path
+    templates, cases, tmp_path, grounding_catalog
 ):
     report = run_e1(
-        fake_bench(),
+        fake_bench(grounding_catalog),
         backends={},
         templates=[templates["missing-close-operator"]],
         cases=cases,
@@ -340,10 +351,10 @@ def test_oracle_reference_is_a_correct_repair_and_no_repair_is_not(
 
 
 def test_oracle_declares_unsupported_on_the_navigation_template(
-    templates, cases, tmp_path
+    templates, cases, tmp_path, grounding_catalog, library
 ):
     report = run_e1(
-        fake_bench(),
+        fake_bench(grounding_catalog),
         backends={},
         templates=[templates["unsupported-navigation-library"]],
         cases=cases,
@@ -356,10 +367,10 @@ def test_oracle_declares_unsupported_on_the_navigation_template(
 
 
 def test_silent_template_records_no_failure_and_leaves_rates_alone(
-    templates, cases, tmp_path
+    templates, cases, tmp_path, grounding_catalog
 ):
     report = run_e1(
-        fake_bench(),
+        fake_bench(grounding_catalog),
         backends={},
         templates=[templates["missing-delete-effect"]],
         cases=cases,
@@ -370,7 +381,7 @@ def test_silent_template_records_no_failure_and_leaves_rates_alone(
 
 
 def test_enumeration_first_static_clean_candidate_is_refused_behaviorally(
-    templates, cases, tmp_path
+    templates, cases, tmp_path, grounding_catalog
 ):
     """
     The enumerator stops at the first statically clean candidate; the mandatory suite
@@ -378,7 +389,7 @@ def test_enumeration_first_static_clean_candidate_is_refused_behaviorally(
     labour working as designed.
     """
     report = run_e1(
-        fake_bench(),
+        fake_bench(grounding_catalog),
         backends={"typed-enumeration": EnumerationBackend()},
         templates=[templates["missing-close-operator"]],
         cases=cases,
@@ -401,7 +412,7 @@ def test_enumeration_first_static_clean_candidate_is_refused_behaviorally(
 
 
 def test_weak_admission_suite_admits_a_bait_and_held_out_catches_it(
-    templates, cases, tmp_path
+    templates, cases, tmp_path, grounding_catalog
 ):
     """
     The E1 false-admission endpoint: a box-ticking admission suite lets the missing-
@@ -410,12 +421,14 @@ def test_weak_admission_suite_admits_a_bait_and_held_out_catches_it(
     template = templates["missing-close-operator"]
     bait = next(
         c
-        for c in admission_candidates(template, build_fixed_arm_library())
+        for c in admission_candidates(
+            template, build_fixed_arm_library(grounding_catalog)
+        )
         if c.name == "missing-reachability-precondition"
     )
     backend = ScriptedPatchBackend(patch=bait.patch)
     weak = run_e1(
-        fake_bench(weak_admission=True),
+        fake_bench(grounding_catalog, weak_admission=True),
         backends={"scripted-patch": backend},
         templates=[template],
         cases=cases,
@@ -428,7 +441,7 @@ def test_weak_admission_suite_admits_a_bait_and_held_out_catches_it(
     assert episode.false_admission and not episode.correct_repair
 
     strict = run_e1(
-        fake_bench(),
+        fake_bench(grounding_catalog),
         backends={"scripted-patch": backend},
         templates=[template],
         cases=cases,
@@ -439,7 +452,9 @@ def test_weak_admission_suite_admits_a_bait_and_held_out_catches_it(
     assert not episode.admitted and not episode.false_admission
 
 
-def test_probe_hook_runs_the_repair_task_on_proposal_scenes(templates, cases, tmp_path):
+def test_probe_hook_runs_the_repair_task_on_proposal_scenes(
+    templates, cases, tmp_path, grounding_catalog
+):
     template = templates["missing-close-operator"]
     captured = {}
 
@@ -459,7 +474,7 @@ def test_probe_hook_runs_the_repair_task_on_proposal_scenes(templates, cases, tm
             return RepairOutcome(backend=self.name, status=OutcomeStatus.NO_CANDIDATE)
 
     run_e1(
-        fake_bench(),
+        fake_bench(grounding_catalog),
         backends={"probing": ProbingBackend()},
         templates=[template],
         cases=cases,
@@ -476,7 +491,7 @@ def test_probe_hook_runs_the_repair_task_on_proposal_scenes(templates, cases, tm
 
 
 def test_a_backend_killed_by_infrastructure_loses_the_episode_not_the_grid(
-    templates, cases, tmp_path
+    templates, cases, tmp_path, grounding_catalog
 ):
     """A rate-limit storm outlasting the retry policy escapes the backend
     as an exception: the episode is recorded as infrastructure-error,
@@ -495,7 +510,7 @@ def test_a_backend_killed_by_infrastructure_loses_the_episode_not_the_grid(
             raise TransientInfrastructureError("LLM call failed after 10 attempts")
 
     report = run_e1(
-        fake_bench(),
+        fake_bench(grounding_catalog),
         backends={"dead-endpoint": DeadEndpointBackend()},
         templates=[template],
         cases=cases,
@@ -515,7 +530,7 @@ def test_a_backend_killed_by_infrastructure_loses_the_episode_not_the_grid(
 
 
 def test_backend_programming_error_is_not_hidden_as_infrastructure(
-    templates, cases, tmp_path
+    templates, cases, tmp_path, grounding_catalog
 ):
     template = templates["missing-close-operator"]
 
@@ -528,7 +543,7 @@ def test_backend_programming_error_is_not_hidden_as_infrastructure(
 
     with pytest.raises(RuntimeError, match="program defect"):
         run_e1(
-            fake_bench(),
+            fake_bench(grounding_catalog),
             backends={"broken": BrokenBackend()},
             templates=[template],
             cases=cases,
@@ -544,7 +559,9 @@ def test_gate_margins_must_be_rates():
         GateP2Margins(repair_noninferiority=1.01)
 
 
-def test_episode_records_rebuild_an_equivalent_report(templates, cases, tmp_path):
+def test_episode_records_rebuild_an_equivalent_report(
+    templates, cases, tmp_path, grounding_catalog
+):
     """
     to_json -> from_json -> E1Report reproduces every pre-registered rate, so a sharded
     or crashed grid can be assembled from its episodes.jsonl records alone.
@@ -555,7 +572,7 @@ def test_episode_records_rebuild_an_equivalent_report(templates, cases, tmp_path
 
     template = templates["missing-close-operator"]
     original = run_e1(
-        fake_bench(),
+        fake_bench(grounding_catalog),
         backends={"typed-enumeration": EnumerationBackend()},
         templates=[template],
         cases=cases,
@@ -574,7 +591,9 @@ def test_episode_records_rebuild_an_equivalent_report(templates, cases, tmp_path
     )
 
 
-def test_a_crashing_probe_is_an_observation_not_an_abort(templates, cases, tmp_path):
+def test_a_crashing_probe_is_an_observation_not_an_abort(
+    templates, cases, tmp_path, grounding_catalog, library
+):
     """
     The probed patch is arbitrary model output; if it makes the runner blow up, the
     backend gets a structured error back and the episode continues.
@@ -583,7 +602,7 @@ def test_a_crashing_probe_is_an_observation_not_an_abort(templates, cases, tmp_p
 
     template = templates["missing-close-operator"]
     captured = {}
-    bench = fake_bench()
+    bench = fake_bench(grounding_catalog)
     real_runner = bench.runner
 
     def exploding_runner(library, task, variation, working_directory):
@@ -620,10 +639,12 @@ def test_a_crashing_probe_is_an_observation_not_an_abort(templates, cases, tmp_p
     )
 
 
-def test_run_e1_appends_episode_records_to_the_runlog(templates, cases, tmp_path):
+def test_run_e1_appends_episode_records_to_the_runlog(
+    templates, cases, tmp_path, grounding_catalog
+):
     recorder = RunRecorder.create("e1-test", root=tmp_path / "runs")
     run_e1(
-        fake_bench(),
+        fake_bench(grounding_catalog),
         backends={},
         templates=[templates["missing-close-operator"]],
         cases=cases,
@@ -640,11 +661,13 @@ def test_run_e1_appends_episode_records_to_the_runlog(templates, cases, tmp_path
     assert all("budget" in r and "false_admission" in r for r in records)
 
 
-def test_missing_split_cases_are_rejected(templates, cases, tmp_path):
+def test_missing_split_cases_are_rejected(
+    templates, cases, tmp_path, grounding_catalog
+):
     incomplete = [c for c in cases if c.split != HELD_OUT]
     with pytest.raises(ValueError, match="held-out"):
         run_e1(
-            fake_bench(),
+            fake_bench(grounding_catalog),
             backends={},
             templates=[templates["missing-close-operator"]],
             cases=incomplete,
@@ -655,8 +678,10 @@ def test_missing_split_cases_are_rejected(templates, cases, tmp_path):
 # -- labelled candidates ------------------------------------------------
 
 
-def test_admission_candidates_are_labelled_and_static_clean(templates):
-    correct = build_fixed_arm_library()
+def test_admission_candidates_are_labelled_and_static_clean(
+    templates, grounding_catalog
+):
+    correct = build_fixed_arm_library(grounding_catalog)
     template = templates["missing-close-operator"]
     candidates = {c.name: c for c in admission_candidates(template, correct)}
     assert candidates["reference"].behaviorally_correct
@@ -669,19 +694,23 @@ def test_admission_candidates_are_labelled_and_static_clean(templates):
     misbound = candidates["misbound-execution-request"].patch.operators[0]
     assert misbound.execution_binding.role_map["target_state"].value == "OPEN"
     curator = Curator(
-        known_evaluators=KNOWN_EVALUATORS,
         available_capabilities=AVAILABLE_CAPABILITIES,
+        grounding_factory_specs={
+            specification.uid: specification for specification in grounding_catalog
+        },
     )
     faulted = template.apply(correct)
     for candidate in candidates.values():
         assert curator.static_review(candidate.patch, faulted) == []
 
 
-def test_unrepairable_templates_have_no_candidate_pool(templates):
+def test_unrepairable_templates_have_no_candidate_pool(
+    templates, grounding_catalog, library
+):
     assert (
         admission_candidates(
             templates["unsupported-navigation-library"],
-            build_fixed_arm_library(),
+            build_fixed_arm_library(grounding_catalog),
         )
         == ()
     )
@@ -690,9 +719,11 @@ def test_unrepairable_templates_have_no_candidate_pool(templates):
 # -- E2 -----------------------------------------------------------------
 
 
-def test_e2_policy_tiers_separate_the_baits(templates, cases, tmp_path):
+def test_e2_policy_tiers_separate_the_baits(
+    templates, cases, tmp_path, grounding_catalog
+):
     report = run_e2(
-        fake_bench(),
+        fake_bench(grounding_catalog),
         templates=[templates["missing-close-operator"]],
         cases=cases,
         working_root=tmp_path,

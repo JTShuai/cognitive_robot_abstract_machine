@@ -55,12 +55,12 @@ expanded and executed by Coraplex against the current environment.
 ```text
 resym/src/resym/
   core/           symbolic model, stable references, grounding failures
-  platform/       capability contracts, embodiment, evaluators, Coraplex catalog
+  platform/       capability contracts, embodiment, grounding-factory review, feasibility
   planning/       selection, grounding, PDDL, monitored execution
   repair/         failure certificates, repair agents, curator, versioning
   knowledge/      UniDomain corpus, ontology, retrieval
   llm/ interfaces/ observability/ evaluation/
-experiments/src/experiments/resym/   scenes, seed libraries, ICRA protocol
+experiments/src/experiments/resym/   scenes, grounding assets, task models, ICRA protocol
 test/resym_test/                     core tests (host-runnable)
 test/experiments_test/resym/         scene and experiment tests (container)
 ```
@@ -105,7 +105,7 @@ docker run --rm \
   -p 5000:5000 \
   cram:jazzy-resym \
   uv run --active --no-sync python -m resym.observability.viewer \
-    runs --library-dir library \
+    runs \
     --grounding-workspace tmp/grounding_factory_workspace \
     --host 0.0.0.0
 ```
@@ -136,7 +136,6 @@ Start the review Viewer locally:
 ```bash
 uv run --no-sync python -m resym.observability.viewer \
   resym/runs \
-  --library-dir resym/library \
   --grounding-workspace resym/tmp/grounding_factory_workspace
 ```
 

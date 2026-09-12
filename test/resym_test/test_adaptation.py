@@ -31,6 +31,7 @@ from resym.core.model import (
     SymbolLibrary,
 )
 from .capability_helpers import capability_contract, execution_binding
+from .grounding_helpers import STUB_GROUNDING_PLAN
 
 from resym.core.model import SymbolType
 from semantic_digital_twin.robots.robot_parts import AbstractRobot
@@ -40,7 +41,6 @@ DRAWER_TYPE = SymbolType.from_python_type(Drawer)
 ROBOT_TYPE = SymbolType.from_python_type(AbstractRobot)
 
 
-KNOWN_EVALUATORS = frozenset({"drawer_closed", "drawer_opened"})
 CAPABILITY_UID = "test:DrawerStateChange"
 AVAILABLE_CAPABILITIES = frozenset({CAPABILITY_UID})
 
@@ -56,7 +56,7 @@ def local_library() -> SymbolLibrary:
             PredicateSymbol(
                 name=name,
                 parameter_types=(DRAWER_TYPE,),
-                evaluator="drawer_opened" if name == "drawer-open" else "drawer_closed",
+                grounding_plan=STUB_GROUNDING_PLAN,
                 fluent=True,
             )
         )
@@ -109,7 +109,6 @@ def test_valid_alignment_yields_typed_patch(close_fragment):
         close_fragment,
         full_alignment(),
         local_library(),
-        KNOWN_EVALUATORS,
         AVAILABLE_CAPABILITIES,
     )
     assert result.succeeded, [i.render() for i in result.issues]
@@ -137,7 +136,6 @@ def test_missing_binding_is_reported_and_left_unresolved(close_fragment):
         close_fragment,
         alignment,
         local_library(),
-        KNOWN_EVALUATORS,
         AVAILABLE_CAPABILITIES,
     )
     assert not result.succeeded
@@ -151,7 +149,7 @@ def test_arity_mismatch_is_a_type_issue(close_fragment):
         PredicateSymbol(
             name="binary-open",
             parameter_types=(ROBOT_TYPE, DRAWER_TYPE),
-            evaluator="drawer_opened",
+            grounding_plan=STUB_GROUNDING_PLAN,
             fluent=True,
         )
     )
@@ -165,9 +163,7 @@ def test_arity_mismatch_is_a_type_issue(close_fragment):
         ),
         execution_binding=close_binding(),
     )
-    result = adapt_operator(
-        close_fragment, alignment, library, KNOWN_EVALUATORS, AVAILABLE_CAPABILITIES
-    )
+    result = adapt_operator(close_fragment, alignment, library, AVAILABLE_CAPABILITIES)
     assert any(i.kind is AdaptationIssueKind.TYPE_MISMATCH for i in result.issues)
 
 
@@ -177,7 +173,6 @@ def test_unavailable_capability_is_unsupported_embodiment(close_fragment):
         close_fragment,
         alignment,
         local_library(),
-        KNOWN_EVALUATORS,
         available_capabilities=frozenset(),
     )
     assert any(
@@ -192,7 +187,6 @@ def test_undeclared_contract_is_reported(close_fragment):
         close_fragment,
         full_alignment(),
         library,
-        KNOWN_EVALUATORS,
         AVAILABLE_CAPABILITIES,
     )
     assert any(
@@ -211,7 +205,6 @@ def test_effect_beyond_contract_is_a_conflict(close_fragment):
         close_fragment,
         full_alignment(),
         library,
-        KNOWN_EVALUATORS,
         AVAILABLE_CAPABILITIES,
     )
     assert any(
@@ -231,19 +224,17 @@ def test_new_predicate_uses_a_reviewed_query(close_fragment):
                 "drawer_open",
                 "drawer-open",
                 parameter_types=(DRAWER_TYPE,),
-                evaluator="drawer_opened",
+                grounding_plan=STUB_GROUNDING_PLAN,
             ),
             PredicateBinding("drawer_closed", "drawer-closed"),
         ),
         execution_binding=close_binding(),
     )
-    result = adapt_operator(
-        close_fragment, alignment, library, KNOWN_EVALUATORS, AVAILABLE_CAPABILITIES
-    )
+    result = adapt_operator(close_fragment, alignment, library, AVAILABLE_CAPABILITIES)
     assert result.succeeded, [i.render() for i in result.issues]
     (predicate,) = result.patch.predicates
     assert predicate.name == "drawer-open"
-    assert predicate.evaluator == "drawer_opened"
+    assert predicate.grounding_plan == STUB_GROUNDING_PLAN
 
 
 def test_creating_over_an_existing_predicate_is_a_conflict(close_fragment):
@@ -256,7 +247,7 @@ def test_creating_over_an_existing_predicate_is_a_conflict(close_fragment):
                 "drawer_open",
                 "drawer-open",
                 parameter_types=(DRAWER_TYPE,),
-                evaluator="drawer_opened",  # creates new, but name exists
+                grounding_plan=STUB_GROUNDING_PLAN,  # creates new, but name exists
             ),
             PredicateBinding("drawer_closed", "drawer-closed"),
         ),
@@ -266,7 +257,6 @@ def test_creating_over_an_existing_predicate_is_a_conflict(close_fragment):
         close_fragment,
         alignment,
         local_library(),
-        KNOWN_EVALUATORS,
         AVAILABLE_CAPABILITIES,
     )
     assert any(
@@ -289,7 +279,6 @@ def test_suggest_alignment_reconstructs_the_mapping(close_fragment):
         close_fragment,
         alignment,
         local_library(),
-        KNOWN_EVALUATORS,
         AVAILABLE_CAPABILITIES,
     )
     assert result.succeeded
@@ -301,7 +290,6 @@ def test_patch_complexity_is_lexicographic(close_fragment):
         close_fragment,
         full_alignment(),
         library,
-        KNOWN_EVALUATORS,
         AVAILABLE_CAPABILITIES,
     )
     complexity = result.patch.complexity(library)
@@ -314,7 +302,6 @@ def test_apply_to_never_mutates_the_base(close_fragment):
         close_fragment,
         full_alignment(),
         library,
-        KNOWN_EVALUATORS,
         AVAILABLE_CAPABILITIES,
     )
     candidate = result.patch.apply_to(library)
@@ -329,7 +316,7 @@ def test_patch_json_is_complete_replayable_and_checksummed(close_fragment):
     predicate = PredicateSymbol(
         name="thresholded",
         parameter_types=(DRAWER_TYPE,),
-        evaluator="drawer_opened",
+        grounding_plan=STUB_GROUNDING_PLAN,
         fluent=True,
         provenance=provenance,
     )

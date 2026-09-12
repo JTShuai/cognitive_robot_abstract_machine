@@ -21,7 +21,6 @@ from resym.core.capabilities import (
 )
 from resym.core.grounding import PredicateGroundingPlan
 from resym.core.predicate_refs import (
-    PredicateImplementation,
     PredicateRef,
     TruthProcedureRef,
 )
@@ -58,16 +57,16 @@ class PredicateSymbol:
 
     name: str
     parameter_types: tuple[SymbolType, ...]
-    evaluator: str
     fluent: bool
+    grounding_plan: PredicateGroundingPlan
+    """
+    Reviewed factory binding used to compute every grounded truth value.
+    """
+
     provenance: Provenance = Provenance()
     uid: str | None = None
     version: str = "1"
     truth_procedure_ref: TruthProcedureRef | None = None
-    grounding_plan: PredicateGroundingPlan | None = None
-    """
-    Reviewed EQL factory binding; absent for legacy registered evaluators.
-    """
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "parameter_types", tuple(self.parameter_types))
@@ -77,24 +76,12 @@ class PredicateSymbol:
             object.__setattr__(
                 self,
                 "truth_procedure_ref",
-                (
-                    TruthProcedureRef.query(self.name, self.grounding_plan.version)
-                    if self.grounding_plan is not None
-                    else TruthProcedureRef.registered(self.evaluator)
-                ),
+                TruthProcedureRef.query(self.name, self.grounding_plan.version),
             )
 
     @property
     def ref(self) -> PredicateRef:
         return PredicateRef(self.uid, self.version, self.name)
-
-    @property
-    def implementation(self) -> PredicateImplementation:
-        return PredicateImplementation(
-            ref=self.truth_procedure_ref,
-            evaluator_key=self.evaluator,
-        )
-
 
 @dataclass(frozen=True)
 class Operator:

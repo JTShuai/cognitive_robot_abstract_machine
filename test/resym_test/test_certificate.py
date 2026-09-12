@@ -11,13 +11,13 @@ from dataclasses import replace
 
 from krrood.adapters.json_serializer import to_json
 
-from .library_fixtures import build_fixed_arm_library
+from .grounding_helpers import STUB_GROUNDING_PLAN
 from resym.core.grounding import GroundingFailure, GroundingFailureCode
 from resym.repair.certificate import (
     CURATION_TRIGGERS,
     FailureClass,
     certify_execution_failure,
-    certify_evaluator_binding_error,
+    certify_grounding_factory_binding_error,
     certify_grounding_failure,
     certify_unsolvable,
     certify_unsupported_capability,
@@ -58,8 +58,8 @@ def seedlike_library() -> SymbolLibrary:
             PredicateSymbol(
                 name=name,
                 parameter_types=(DRAWER_TYPE,),
-                evaluator="stub",
                 fluent=True,
+                grounding_plan=STUB_GROUNDING_PLAN,
             )
         )
     library.add(
@@ -95,8 +95,8 @@ def test_goal_predicate_without_achiever_is_missing_operator_model():
     assert "closed" in certificate.causal_neighborhood.unachievable_goal_predicates
 
 
-def test_capability_target_exposes_wrong_operator_effect():
-    library = build_fixed_arm_library()
+def test_capability_target_exposes_wrong_operator_effect(fixed_arm_library):
+    library = fixed_arm_library
     original = library.operators["open-drawer"]
     library.operators["open-drawer"] = replace(
         original,
@@ -233,13 +233,16 @@ def test_unsupported_capability_stops_curation():
     assert not certificate.triggers_curation
 
 
-def test_missing_evaluator_binding_triggers_curation_with_unsupported_alternative():
+def test_missing_grounding_binding_triggers_curation_with_unsupported_alternative():
     library = seedlike_library()
     goal = (Literal("opened", ("d1",)),)
-    certificate = certify_evaluator_binding_error(
+    certificate = certify_grounding_factory_binding_error(
         goal,
         selection_for(library),
-        missing="predicate 'opened' needs evaluator 'drawer_opened_v2'",
+        missing=(
+            "predicate 'opened' needs grounding factory "
+            "'resym:grounding/joint-fraction-opened-v2'"
+        ),
     )
 
     assert certificate.failure_class is FailureClass.PREDICATE_IMPLEMENTATION_ERROR

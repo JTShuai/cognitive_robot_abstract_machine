@@ -1,5 +1,5 @@
 """
-References to CRAM semantic types and trusted evaluator signatures.
+References to CRAM semantic types.
 """
 
 from __future__ import annotations
@@ -52,13 +52,3 @@ def resolve_symbol_type(symbol_type: SymbolType) -> type:
 
 def is_symbol_subtype(actual: SymbolType, expected: SymbolType) -> bool:
     return issubclass(resolve_symbol_type(actual), resolve_symbol_type(expected))
-
-
-@dataclass(frozen=True)
-class EvaluatorSpec:
-    """
-    Trusted evaluator ABI: name and ordered object types.
-    """
-
-    name: str
-    parameter_types: tuple[SymbolType, ...]

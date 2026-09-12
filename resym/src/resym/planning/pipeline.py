@@ -19,10 +19,10 @@ from typing_extensions import Optional
 
 from resym.core.grounding import GroundingFailure
 from resym.platform.embodiment import (
-    InvalidEvaluatorBindingError,
+    InvalidGroundingFactoryBindingError,
     UnsupportedCapabilityError,
 )
-from resym.platform.evaluators import EvaluationContext
+from resym.platform.grounding_context import EvaluationContext
 from resym.planning.execution.engine import (
     ExecutionReport,
     GoalCheck,
@@ -75,7 +75,7 @@ class Nogood:
     """The execution-level violation, if any."""
 
     detail: str
-    """Human-readable provenance (failed literal, evaluator reason, or goal
+    """Human-readable provenance (failed literal, grounding reason, or goal
     check result)."""
 
     platform_result: PlatformExecutionResult | None = None
@@ -179,9 +179,9 @@ def solve_task(
 
     Before anything is grounded, the goal-relevant selection is checked
     against the embodiment profile. A missing execution capability raises
-    :class:`UnsupportedCapabilityError`. A missing evaluator binding raises
-    :class:`InvalidEvaluatorBindingError`, allowing repair to distinguish a
-    bad symbol binding from a genuine platform limitation.
+    :class:`UnsupportedCapabilityError`. A missing grounding-factory binding raises
+    :class:`InvalidGroundingFactoryBindingError`, allowing repair to distinguish a bad
+    symbol binding from a genuine platform limitation.
     """
     result = TaskResult()
     emit_event(
@@ -199,26 +199,26 @@ def solve_task(
             issues=[issue.render() for issue in model_issues],
         )
         raise InvalidSymbolLibraryError(model_issues, selection)
-    missing_evaluators = context.profile.missing_evaluators(
+    missing_grounding_factories = context.profile.missing_grounding_factories(
         selection, context.grounding_catalog
     )
     missing_capabilities = context.profile.missing_capabilities(selection)
     if missing_capabilities:
-        missing = missing_evaluators + missing_capabilities
+        missing = missing_grounding_factories + missing_capabilities
         emit_event(
             event_sink,
             PipelineEvent.TASK_UNSUPPORTED,
             missing=[str(requirement) for requirement in missing],
         )
         raise UnsupportedCapabilityError(missing, goal=goal, selection=selection)
-    if missing_evaluators:
+    if missing_grounding_factories:
         emit_event(
             event_sink,
-            PipelineEvent.EVALUATOR_BINDING_INVALID,
-            missing=[str(requirement) for requirement in missing_evaluators],
+            PipelineEvent.GROUNDING_FACTORY_BINDING_INVALID,
+            missing=[str(requirement) for requirement in missing_grounding_factories],
         )
-        raise InvalidEvaluatorBindingError(
-            missing_evaluators, goal=goal, selection=selection
+        raise InvalidGroundingFactoryBindingError(
+            missing_grounding_factories, goal=goal, selection=selection
         )
     task_universe = universe.for_task(selection, goal)
     emit_event(

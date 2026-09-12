@@ -33,7 +33,8 @@ from resym.core.model import (
     SymbolLibrary,
 )
 from .capability_helpers import capability_contract
-from .library_fixtures import build_fixed_arm_library
+from experiments.resym.seed_library import build_fixed_arm_library
+from .grounding_helpers import STUB_GROUNDING_PLAN
 from .test_grounding_factory_catalog import DATASET, vocabulary
 
 from resym.core.model import SymbolType
@@ -88,8 +89,8 @@ def library() -> SymbolLibrary:
             PredicateSymbol(
                 name=name,
                 parameter_types=(DRAWER_TYPE,),
-                evaluator="drawer_opened",
                 fluent=True,
+                grounding_plan=STUB_GROUNDING_PLAN,
             )
         )
     lib.add_capability_contract(
@@ -171,7 +172,7 @@ def task_with(index=None, check_patch=None, run_probe=None) -> RepairTask:
     return RepairTask(
         certificate=StubCertificate(),
         library=task_library,
-        evaluator_listing="- drawer_opened: joint above threshold",
+        grounding_factory_listing="- resym:grounding/joint-fraction-opened: joint above threshold",
         capability_listing=f"- {CAPABILITY_UID}: set drawer state",
         capability_catalog=tuple(task_library.capability_contracts.values()),
         index=index,
@@ -495,6 +496,41 @@ def test_duplicate_candidate_is_idempotent_and_does_not_spend_candidate_budget()
     )
 
 
+def test_duplicate_candidate_with_predicates_is_recognized():
+    arguments = proposal_arguments()
+    arguments["proposal"]["predicates"] = [
+        {
+            "name": "latched",
+            "parameter_types": [DRAWER_TYPE.python_type_ref],
+            "fluent": True,
+            "grounding_plan": {
+                "factory_uid": "resym:grounding/joint-fraction-opened",
+                "approved_factory_checksum": "reviewed-checksum",
+                "role_bindings": {"articulated_object": 0},
+                "parameters": {"threshold": 0.5},
+            },
+        }
+    ]
+    agent, client = agent_with(
+        action("propose_patch", **arguments),
+        action("check_patch"),
+        action("propose_patch", **arguments),
+        action("check_patch"),
+        action("submit_for_admission"),
+    )
+    reviews = iter((["not admissible yet"], []))
+
+    outcome = agent.repair(
+        task_with(check_patch=lambda patch: next(reviews)), BudgetMeter()
+    )
+
+    assert outcome.status is OutcomeStatus.PATCH_PROPOSED
+    assert outcome.budget["candidates_used"] == 1
+    assert any(
+        "duplicate candidate ignored" in prompt for prompt in client.received_prompts
+    )
+
+
 def test_submission_requires_static_check_and_required_probe():
     agent, client = agent_with(
         action("propose_patch", **proposal_arguments()),
@@ -537,9 +573,9 @@ def test_submission_refuses_a_failed_required_probe():
     assert "failed required probes" in client.received_prompts[4]
 
 
-def test_static_check_rejects_unrelated_existing_operator_edit():
+def test_static_check_rejects_unrelated_existing_operator_edit(grounding_catalog):
     task = task_with(check_patch=lambda patch: [])
-    task.library = build_fixed_arm_library()
+    task.library = build_fixed_arm_library(grounding_catalog)
     unrelated = {
         "proposal": {
             "rationale": "unrelated edit",

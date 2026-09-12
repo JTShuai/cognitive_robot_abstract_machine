@@ -13,7 +13,6 @@ from resym.core.capabilities import (
     contract_violations,
 )
 from resym.core.grounding import (
-    GROUNDING_PLAN_EVALUATOR_KEY,
     GroundingFactoryCandidate,
     GroundingFactoryOrigin,
     GroundingFactoryParameter,
@@ -26,11 +25,7 @@ from resym.core.grounding import (
     GroundingFailureCode,
     PredicateGroundingPlan,
 )
-from resym.core.predicate_refs import (
-    PredicateImplementation,
-    PredicateRef,
-    TruthProcedureRef,
-)
+from resym.core.predicate_refs import PredicateRef, TruthProcedureRef
 from resym.core.provenance import OntologyAlignment, Provenance
 from resym.core.symbols import (
     DuplicateSymbolError,
@@ -39,21 +34,14 @@ from resym.core.symbols import (
     PredicateSymbol,
     SymbolLibrary,
 )
-from resym.core.types import (
-    EvaluatorSpec,
-    SymbolType,
-    is_symbol_subtype,
-    resolve_symbol_type,
-)
+from resym.core.types import SymbolType, is_symbol_subtype, resolve_symbol_type
 
 __all__ = [
-    "GROUNDING_PLAN_EVALUATOR_KEY",
     "BindingSource",
     "CapabilityContract",
     "CapabilityRef",
     "CapabilityRole",
     "DuplicateSymbolError",
-    "EvaluatorSpec",
     "ExecutionRequest",
     "GroundingFactoryCandidate",
     "GroundingFactoryOrigin",
@@ -70,7 +58,6 @@ __all__ = [
     "Operator",
     "OperatorExecutionBinding",
     "PredicateGroundingPlan",
-    "PredicateImplementation",
     "PredicateRef",
     "PredicateSymbol",
     "Provenance",

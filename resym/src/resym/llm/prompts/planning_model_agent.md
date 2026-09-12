@@ -31,9 +31,6 @@ $contracts
 
 ## Menus (the only building blocks you may reference)
 
-Truth procedures (evaluators):
-$evaluators
-
 Reviewed krrood/Semantic-Digital-Twin predicate queries:
 $predicate_queries
 
@@ -67,7 +64,8 @@ Required next action: $next_step
 A propose_patch call for a new operator must carry the complete definition:
 {"tool": "propose_patch", "arguments": {"proposal": {
   "rationale": "<why this patch closes the gap>",
-  "predicates": [{"name": "...", "parameter_types": ["<type>"], "evaluator": "<legacy evaluator name>", "fluent": true}],
+  "predicates": [{"name": "...", "parameter_types": ["<type>"], "fluent": true,
+    "grounding_plan": {"factory_uid": "<reviewed factory>", "approved_factory_checksum": "<catalog checksum>", "role_bindings": {"<role>": 0}}}],
   "operators": [{
     "name": "...",
     "parameters": [{"variable": "d", "type": "<type>"}],
@@ -80,17 +78,20 @@ A propose_patch call for a new operator must carry the complete definition:
     "constant_bindings": {"target_state": "OPEN"}
   }]
 }}}
-For a new predicate, select one listed legacy `evaluator`, or bind an approved
-factory with `grounding_plan`:
-{"name": "closed", "parameter_types": ["<articulated type>"], "fluent": true,
+For a new predicate, bind an approved factory from the catalog with `grounding_plan`.
+Copy its uid and checksum from the catalog listing; bind every declared role to an
+argument position, and set any parameter the factory declares:
+{"name": "<predicate>", "parameter_types": ["<type per argument>"], "fluent": true,
  "grounding_plan": {
-   "factory_uid": "resym:grounding/joint-fraction-opened",
-   "approved_factory_checksum": "<checksum from catalog>",
-   "role_bindings": {"articulated_object": 0},
-   "parameters": {"threshold": 0.9}, "negated": true, "version": "1"
+   "factory_uid": "<uid from the catalog listing>",
+   "approved_factory_checksum": "<checksum from the same listing>",
+   "role_bindings": {"<role>": 0},
+   "parameters": {"<parameter>": 0.9}, "negated": true, "version": "1"
  }}
-Do not set both `evaluator` and `grounding_plan`. When the
-predicate realizes an effect a capability contract lists by stable id, also set
+A factory uid under `resym:grounding/feasible/` asks whether a capability can be
+realized for the bound objects, so it is the binding for a predicate that states the
+platform is able to act, not one that states a world state.
+When the predicate realizes an effect a capability contract lists by stable id, also set
 `uid` to that id so the alignment survives a different local name.
 When correcting an existing operator, send only its name and changed fields.
 For example, an effect-only correction is:
@@ -140,7 +141,7 @@ added or modified; omit unchanged symbols.
   function composed only from the reviewed EQL vocabulary. This ends the
   episode with a non-executable candidate for human review; it does not make
   that candidate available to the current patch.
-- Never invent an evaluator or grounding-factory identifier. A later episode
+- Never invent a grounding-factory identifier. A later episode
   may reference a candidate only after a human has approved and materialized
   it in the grounding catalog.
 - If the required relation needs world information or computation absent from

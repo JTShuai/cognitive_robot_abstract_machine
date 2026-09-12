@@ -35,6 +35,7 @@ from resym.core.model import (
     Literal,
     Operator,
     OperatorExecutionBinding,
+    PredicateGroundingPlan,
     PredicateRef,
     PredicateSymbol,
     Provenance,
@@ -184,7 +185,7 @@ class ModelPatch:
 class PredicateBinding:
     """
     How one fragment predicate lands locally: onto an existing predicate, or as a new
-    one carrying a reviewed platform-query key.
+    one carrying a reviewed grounding plan.
     """
 
     fragment_predicate: str
@@ -194,12 +195,14 @@ class PredicateBinding:
     Required for a new predicate; must be None-compatible with an existing one.
     """
 
-    evaluator: Optional[str] = None
+    grounding_plan: Optional[PredicateGroundingPlan] = None
+    """Required factory binding when the alignment creates a predicate."""
+
     fluent: bool = True
 
     @property
     def creates_new(self) -> bool:
-        return self.evaluator is not None
+        return self.grounding_plan is not None
 
 
 @dataclass(frozen=True)
@@ -238,17 +241,14 @@ def adapt_operator(
     fragment: DomainFragment,
     alignment: OperatorAlignment,
     library: SymbolLibrary,
-    known_evaluators: frozenset[str],
     available_capabilities: frozenset[str],
     provenance: Optional[Provenance] = None,
 ) -> AdaptationResult:
     """
     Validate one alignment and construct the typed patch.
 
-    ``known_evaluators`` is the registry whitelist; ``available_capabilities`` is what
-    the current embodiment implements. All six issue kinds are collected, not short-
-    circuited, so the caller (agent or pipeline) sees every problem of an alignment at
-    once.
+    ``available_capabilities`` is what the current embodiment implements. All issue
+    kinds are collected instead of short-circuited.
     """
     result = AdaptationResult()
     operator_fragment = _find_operator(fragment, alignment.fragment_operator)
@@ -289,7 +289,7 @@ def adapt_operator(
             )
             unresolved.append(f"MISSING_IMPLEMENTATION: predicate '{name}'")
             continue
-        issue = _validate_binding(binding, library, known_evaluators)
+        issue = _validate_binding(binding, library)
         if issue is not None:
             result.issues.append(issue)
             if issue.kind is AdaptationIssueKind.MISSING_PREDICATE_IMPLEMENTATION:
@@ -300,8 +300,8 @@ def adapt_operator(
                 PredicateSymbol(
                     name=binding.local_name,
                     parameter_types=binding.parameter_types,
-                    evaluator=binding.evaluator,
                     fluent=binding.fluent,
+                    grounding_plan=binding.grounding_plan,
                     provenance=provenance or Provenance(source="curation"),
                 )
             )
@@ -529,7 +529,6 @@ def _find_operator(fragment: DomainFragment, name: str) -> Optional[OperatorFrag
 def _validate_binding(
     binding: PredicateBinding,
     library: SymbolLibrary,
-    known_evaluators: frozenset[str],
 ) -> Optional[AdaptationIssue]:
     existing = library.predicates.get(binding.local_name)
     if binding.creates_new:
@@ -545,12 +544,6 @@ def _validate_binding(
                 AdaptationIssueKind.TYPE_MISMATCH,
                 binding.fragment_predicate,
                 "a new predicate needs parameter types",
-            )
-        if binding.evaluator not in known_evaluators:
-            return AdaptationIssue(
-                AdaptationIssueKind.MISSING_PREDICATE_IMPLEMENTATION,
-                binding.fragment_predicate,
-                f"evaluator '{binding.evaluator}' is not registered",
             )
         return None
     if existing is None:

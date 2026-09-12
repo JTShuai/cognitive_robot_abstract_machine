@@ -18,7 +18,7 @@ from typing_extensions import Optional
 from resym.core.grounding import GroundingFailure
 from resym.repair.certificate import (
     FailureCertificate,
-    certify_evaluator_binding_error,
+    certify_grounding_factory_binding_error,
     certify_execution_failure,
     certify_grounding_failure,
     certify_invalid_model,
@@ -27,10 +27,10 @@ from resym.repair.certificate import (
 )
 from resym.core.validation import InvalidSymbolLibraryError
 from resym.platform.embodiment import (
-    InvalidEvaluatorBindingError,
+    InvalidGroundingFactoryBindingError,
     UnsupportedCapabilityError,
 )
-from resym.platform.evaluators import EvaluationContext
+from resym.platform.grounding_context import EvaluationContext
 from resym.planning.execution.engine import ExecutionReport
 from resym.planning.grounding import ground
 from resym.core.model import Literal, SymbolLibrary
@@ -99,10 +99,10 @@ def diagnose(
                 error,
             ),
         )
-    except InvalidEvaluatorBindingError as error:
+    except InvalidGroundingFactoryBindingError as error:
         return TaskDiagnosis(
             succeeded=False,
-            certificate=certify_evaluator_binding_error(
+            certificate=certify_grounding_factory_binding_error(
                 goal,
                 error.selection if error.selection is not None else Selection(),
                 missing="; ".join(error.missing),

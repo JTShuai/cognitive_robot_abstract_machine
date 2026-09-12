@@ -29,7 +29,7 @@ class PipelineEvent(StrEnum):
     TASK_STARTED = "task_started"
     MODEL_VALIDATION_FAILED = "model_validation_failed"
     TASK_UNSUPPORTED = "task_unsupported"
-    EVALUATOR_BINDING_INVALID = "evaluator_binding_invalid"
+    GROUNDING_FACTORY_BINDING_INVALID = "grounding_factory_binding_invalid"
     TASK_OBJECTS_SELECTED = "task_objects_selected"
     ROUND_STARTED = "round_started"
     GROUNDING_FAILED = "grounding_failed"

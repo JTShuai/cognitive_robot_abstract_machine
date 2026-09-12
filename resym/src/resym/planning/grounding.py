@@ -12,10 +12,7 @@ from resym.core.grounding import (
     GroundingFailure,
     GroundingFailureCode,
 )
-from resym.platform.evaluators import (
-    EvaluationContext,
-    resolve_evaluator,
-)
+from resym.platform.grounding_context import EvaluationContext
 from resym.platform.grounding_catalog import GroundingFactoryCatalogError
 from resym.core.model import Literal, PredicateSymbol
 from resym.planning.selection import Selection
@@ -92,44 +89,41 @@ def evaluate_predicate(
     single, versioned implementation reference.
     """
     plan = predicate.grounding_plan
-    if plan is None:
-        procedure = resolve_evaluator(predicate.implementation.evaluator_key)
-        value = procedure(context, universe, arguments)
-        implementation_name = predicate.implementation.evaluator_key
-    else:
-        if context.grounding_catalog is None:
-            raise GroundingFailure(
-                GroundingFailureCode.UNSUPPORTED_QUERY,
-                f"predicate '{predicate.name}' needs grounding factory "
-                f"'{plan.factory_uid}', but no catalog is loaded",
-            )
-        try:
-            specification = context.grounding_catalog.specification(plan.factory_uid)
-            procedure = context.grounding_catalog.resolve(
-                plan.factory_uid,
-                expected_checksum=plan.approved_factory_checksum,
-            )
-        except GroundingFactoryCatalogError as error:
-            raise GroundingFailure(
-                GroundingFailureCode.UNSUPPORTED_QUERY, str(error)
-            ) from error
-        factory_arguments = _factory_arguments(
-            specification.roles, plan.role_bindings, arguments
+    try:
+        specification = context.grounding_catalog.specification(plan.factory_uid)
+        procedure = context.grounding_catalog.resolve(
+            plan.factory_uid,
+            expected_checksum=plan.approved_factory_checksum,
         )
+    except GroundingFactoryCatalogError as error:
+        raise GroundingFailure(
+            GroundingFailureCode.UNSUPPORTED_QUERY, str(error)
+        ) from error
+    factory_arguments = _factory_arguments(
+        specification.roles, plan.role_bindings, arguments
+    )
+    try:
         value = procedure(
             context,
             universe,
             factory_arguments,
             dict(plan.parameters),
         )
-        implementation_name = plan.factory_uid
+    except GroundingFailure:
+        raise
+    except Exception as error:
+        raise GroundingFailure(
+            GroundingFailureCode.QUERY_ERROR,
+            f"predicate query '{plan.factory_uid}' failed: "
+            f"{type(error).__name__}: {error}",
+        ) from error
     if not isinstance(value, bool):
         raise GroundingFailure(
             GroundingFailureCode.QUERY_ERROR,
-            f"predicate query '{implementation_name}' returned "
+            f"predicate query '{plan.factory_uid}' returned "
             f"{type(value).__name__}, expected bool",
         )
-    return not value if plan is not None and plan.negated else value
+    return not value if plan.negated else value
 
 
 def _factory_arguments(

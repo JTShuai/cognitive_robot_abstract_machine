@@ -32,12 +32,16 @@ scenes; it runs only after the admission decision.
 from __future__ import annotations
 
 from copy import deepcopy
+from functools import partial
 from pathlib import Path
 
 from typing_extensions import Optional
 
 from experiments.resym.scenes import SceneSetup, _fixed_arm_mount_pose
-from experiments.resym.seed_library import build_fixed_arm_library
+from experiments.resym.seed_library import (
+    OPENED_FRACTION_THRESHOLD,
+    build_fixed_arm_library,
+)
 from experiments.resym.icra.validation import (
     AdmissionTest,
     BehaviouralCurator,
@@ -45,11 +49,12 @@ from experiments.resym.icra.validation import (
     SuiteGroup,
 )
 from resym.repair.diagnosis import diagnose
-from resym.platform.evaluators import (
-    EVALUATOR_SPECS,
-    EvaluationBudgets,
-    EvaluationContext,
+from resym.platform.grounding_catalog import (
+    GroundingFactoryCatalog,
+    GroundingFactorySourceValidator,
 )
+from resym.platform.kinematic import KinematicFeasibility
+from resym.platform.grounding_context import EvaluationContext
 from experiments.resym.icra.harness import ExperimentBench
 from experiments.resym.icra.articulation.faults import (
     FaultCase,
@@ -102,10 +107,15 @@ class TracyBench:
     """
 
     def __init__(
-        self, setup: SceneSetup, universe: ObjectUniverse, backend_factory=None
+        self,
+        setup: SceneSetup,
+        universe: ObjectUniverse,
+        grounding_catalog: GroundingFactoryCatalog,
+        backend_factory=None,
     ):
         self.setup = setup
         self.universe = universe
+        self.grounding_catalog = grounding_catalog
         self.backend_factory = backend_factory or KinematicSkillRealization
         # A probe may touch more than drawer joints. Keep every calibration,
         # admission, and held-out run independent of the preceding run.
@@ -180,6 +190,8 @@ class TracyBench:
             world=self.setup.world,
             robot=self.setup.robot,
             profile=self.setup.profile,
+            grounding_catalog=self.grounding_catalog,
+            capability_feasibility=KinematicFeasibility(),
         )
 
     # -- the closed-loop probe --------------------------------------------
@@ -244,7 +256,7 @@ class TracyBench:
         manifest with the registered class (or remain silent when declared).
         """
         failures = []
-        correct = build_fixed_arm_library()
+        correct = build_fixed_arm_library(self.grounding_catalog)
         task = template.task
         correct_outcome = self.runner(
             correct, task, variation, working_directory / "correct-primary"
@@ -324,14 +336,14 @@ class TracyBench:
         """
         task = template.task
         goal = task.goal_predicate
-        threshold = EvaluationBudgets().open_fraction
+        threshold = OPENED_FRACTION_THRESHOLD
         boundary_fraction = (
             threshold - BOUNDARY_MARGIN
             if goal == "opened"
             else threshold + BOUNDARY_MARGIN
         )
         reverse_goal = "closed" if goal == "opened" else "opened"
-        faulted = template.apply(build_fixed_arm_library())
+        faulted = template.apply(build_fixed_arm_library(self.grounding_catalog))
         reverse_worked_before = _has_achiever(faulted, reverse_goal)
         # Templates whose probe task targets the out-of-reach drawer
         # (on_mounted_drawer=False) have honest refusal as the CORRECT
@@ -527,18 +539,18 @@ class TracyBench:
         working_directory: Path,
     ) -> BehaviouralCurator:
         return BehaviouralCurator(
-            known_evaluators=self.setup.profile.evaluators,
             available_capabilities=self.setup.profile.capabilities,
             capability_catalog=capability_contracts(),
+            grounding_factory_specs={
+                specification.uid: specification
+                for specification in self.grounding_catalog
+            },
             suite=MandatorySuite(
                 version=f"tracy-suite-1/{template.identifier}",
                 tests=self._behavioural_tests(
                     template, admission_cases, working_directory
                 ),
             ),
-            evaluator_specs={
-                name: EVALUATOR_SPECS[name] for name in self.setup.profile.evaluators
-            },
             allowed_symbol_types=frozenset(
                 item.symbol_type for item in self.universe.objects.values()
             ),
@@ -569,23 +581,38 @@ class TracyBench:
 def build_tracy_bench(
     setup: SceneSetup,
     universe: ObjectUniverse,
+    grounding_catalog: GroundingFactoryCatalog,
     index: Optional[object] = None,
     backend_factory=None,
 ) -> ExperimentBench:
     """
     The harness bench over one loaded Tracy scene.
     """
-    bench = TracyBench(setup, universe, backend_factory=backend_factory)
+    bench = TracyBench(
+        setup, universe, grounding_catalog, backend_factory=backend_factory
+    )
     profile = setup.profile
+    workspace = grounding_catalog.workspace
+    vocabulary = workspace.reviewed_vocabulary() if workspace is not None else None
+    validator = (
+        GroundingFactorySourceValidator(vocabulary) if vocabulary is not None else None
+    )
     return ExperimentBench(
-        correct_library=build_fixed_arm_library,
+        correct_library=partial(build_fixed_arm_library, grounding_catalog),
         runner=bench.runner,
         curator_builder=bench.curator_builder,
         held_out=bench.held_out,
         safety_runner=bench.safety_runner,
-        evaluator_listing="\n".join(f"- {name}" for name in sorted(profile.evaluators)),
+        grounding_factory_listing=grounding_catalog.render(),
+        grounding_vocabulary_listing=(
+            vocabulary.render() if vocabulary is not None else ""
+        ),
+        validate_grounding_candidate=(
+            validator.candidate_objections if validator is not None else None
+        ),
+        grounding_candidate_sink=(workspace.submit if workspace is not None else None),
         capability_listing=render_capability_contracts(
-            build_fixed_arm_library(), set(profile.capabilities)
+            build_fixed_arm_library(grounding_catalog), set(profile.capabilities)
         ),
         capability_catalog=capability_contracts(),
         capability_draft_listing=render_coraplex_capability_candidates(profile),

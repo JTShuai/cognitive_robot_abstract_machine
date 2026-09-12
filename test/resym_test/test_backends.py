@@ -31,6 +31,7 @@ from resym.core.model import (
     SymbolLibrary,
 )
 from .capability_helpers import capability_contract
+from .grounding_helpers import STUB_GROUNDING_PLAN
 
 from resym.core.model import SymbolType
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Drawer
@@ -76,8 +77,8 @@ def library() -> SymbolLibrary:
             PredicateSymbol(
                 name=name,
                 parameter_types=(DRAWER_TYPE,),
-                evaluator="drawer_opened",
                 fluent=True,
+                grounding_plan=STUB_GROUNDING_PLAN,
             )
         )
     lib.add_capability_contract(
@@ -156,7 +157,7 @@ def task_with(index=None, check_patch=None) -> RepairTask:
     return RepairTask(
         certificate=StubCertificate(),
         library=library(),
-        evaluator_listing="- drawer_opened: joint above threshold",
+        grounding_factory_listing="- resym:grounding/joint-fraction-opened: joint above threshold",
         capability_listing=f"- {CAPABILITY_UID}: set drawer state",
         index=index,
         check_patch=check_patch,
@@ -257,12 +258,10 @@ def test_enumeration_synthesizes_the_close_operator_llm_free():
     task = RepairTask(
         certificate=StubCertificate(),
         library=lib,
-        evaluator_listing="",
         capability_listing="",
         check_patch=lambda patch: static_objections(
             patch,
             lib,
-            known_evaluators=frozenset({"drawer_opened"}),
             available_capabilities=frozenset({CAPABILITY_UID}),
         ),
     )
@@ -285,7 +284,6 @@ def test_enumeration_is_deterministic_and_bounded():
     task = RepairTask(
         certificate=StubCertificate(),
         library=lib,
-        evaluator_listing="",
         capability_listing="",
         check_patch=lambda patch: ["never admissible"],
     )
@@ -308,7 +306,6 @@ def test_enumeration_respects_the_shared_budget():
     task = RepairTask(
         certificate=StubCertificate(),
         library=lib,
-        evaluator_listing="",
         capability_listing="",
         check_patch=lambda patch: ["no"],
     )

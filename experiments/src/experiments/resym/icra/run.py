@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from experiments.resym.scenes import Scene, load_fixed_arm_scene
@@ -62,8 +63,12 @@ from experiments.resym.icra.articulation.faults import (
 )
 from resym import PROJECT_ROOT
 from resym.observability.runlog import RunRecorder
+from resym.platform.capabilities import capability_contracts
 from resym.platform.cram_objects import task_object_universe
+from resym.platform.grounding_catalog import freeze_grounding_factories
+from resym.platform.kinematic import KINEMATIC_FEASIBILITY
 from resym.repair.backends import AGENTIC_RAG_BACKEND_NAME
+from experiments.resym.grounding_initialization import default_drawer_grounding_catalog
 
 DEFAULT_BACKENDS = (
     AGENTIC_RAG_BACKEND_NAME,
@@ -75,7 +80,10 @@ DEFAULT_BACKENDS = (
 
 
 def select_templates(names: str):
-    templates = drawer_fault_templates(build_fixed_arm_library())
+    grounding_catalog = default_drawer_grounding_catalog()
+    templates = drawer_fault_templates(
+        build_fixed_arm_library(grounding_catalog), grounding_catalog
+    )
     if names == "all":
         return templates
     wanted = [name.strip() for name in names.split(",") if name.strip()]
@@ -256,7 +264,9 @@ def load_cases(
             "run `./scripts/run_in_docker.sh calibrate` first"
         )
     manifest = FrozenSplitManifest.load(split_manifest)
-    expected_checksum = library_checksum(build_fixed_arm_library())
+    expected_checksum = library_checksum(
+        build_fixed_arm_library(default_drawer_grounding_catalog())
+    )
     if manifest.correct_library_checksum != expected_checksum:
         raise SystemExit(
             "frozen split manifest was calibrated against a different "
@@ -315,7 +325,9 @@ def main() -> None:
     case_counts: dict[str, int] = {}
     for case in cases:
         case_counts[case.split] = case_counts.get(case.split, 0) + 1
-    correct_library_checksum = library_checksum(build_fixed_arm_library())
+    correct_library_checksum = library_checksum(
+        build_fixed_arm_library(default_drawer_grounding_catalog())
+    )
     metadata = {
         "experiment_protocol": json.loads(
             (PROJECT_ROOT / "config" / "experiment_protocol.json").read_text()
@@ -342,6 +354,23 @@ def main() -> None:
         metadata["provenance"],
     )
     recorder.artifact("D_experiment", "source.patch", source_patch)
+    grounding_catalog = default_drawer_grounding_catalog()
+    frozen_library = recorder.stage_dir("D_experiment") / "symbol_library.json"
+    build_fixed_arm_library(grounding_catalog).save(frozen_library)
+    if grounding_catalog.workspace is None:
+        raise RuntimeError("formal experiment requires a grounding review workspace")
+    freeze_grounding_factories(
+        workspace=grounding_catalog.workspace,
+        output_directory=recorder.directory / "grounding_snapshot",
+        symbol_library=frozen_library,
+        capability_contracts=capability_contracts(),
+        capability_feasibility_implementations=KINEMATIC_FEASIBILITY,
+        git_commits=(("cram", str(repository["commit"])),),
+        container_image_digest=os.environ.get("RESYM_CONTAINER_IMAGE_ID"),
+        experiment_configuration=tuple(
+            sorted((name, str(value)) for name, value in vars(arguments).items())
+        ),
+    )
     print(f"[e1e2] run directory: {recorder.directory}")
     print(
         f"[e1e2] templates ({len(templates)}): "
@@ -357,7 +386,7 @@ def main() -> None:
     # UniDomain. Keep the frozen corpus as an E1-only dependency so an E2-only
     # run does not download an embedding model or require corpus_release/r1.
     index = None if arguments.skip_e1 else build_frozen_index()
-    bench = build_tracy_bench(setup, universe, index=index)
+    bench = build_tracy_bench(setup, universe, grounding_catalog, index=index)
     completer = None
     if configuration is not None:
         completer = StructuredCompleter(
