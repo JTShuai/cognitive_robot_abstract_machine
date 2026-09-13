@@ -11,6 +11,7 @@ Execution uses Coraplex action designators performed by the simulated robot.
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -28,6 +29,10 @@ from experiments.resym.seed_library import (
     build_seed_library,
 )
 from resym.core.symbols import Literal, SymbolLibrary
+from resym.interfaces.object_selection import PlanningObjectAgent
+from resym.llm.configuration import LanguageModelConfiguration, build_completion_client
+from resym.llm.structured import StructuredCompleter
+from resym.llm.transcript import TranscriptRecorder
 from resym.planning.pipeline import solve_task
 from resym.observability.runlog import RunRecorder
 from resym.platform.cram_objects import task_object_universe
@@ -36,6 +41,38 @@ from experiments.resym.grounding_initialization import default_drawer_grounding_
 from experiments.resym.drawer_kinematic_oracle import DrawerExperimentFeasibility
 from resym.platform.grounding_context import EvaluationContext
 from resym.platform.universe import pddl_name
+
+OBJECT_AGENT_CONFIGURATION_VARIABLE = "RESYM_OBJECT_AGENT_CONFIG"
+"""
+Environment variable naming a language-model configuration for the planning-object
+agent.
+
+Unset, object selection stays deterministic.
+"""
+
+
+def planning_object_agent(
+    recorder: Optional[RunRecorder],
+) -> Optional[PlanningObjectAgent]:
+    """
+    Build the language-model object agent when a configuration is named.
+    """
+    configuration_path = os.environ.get(OBJECT_AGENT_CONFIGURATION_VARIABLE)
+    if configuration_path is None:
+        return None
+    configuration = LanguageModelConfiguration.load(Path(configuration_path))
+    transcript = (
+        TranscriptRecorder(recorder.transcript_path)
+        if recorder is not None
+        else TranscriptRecorder()
+    )
+    return PlanningObjectAgent(
+        StructuredCompleter(
+            build_completion_client(configuration),
+            transcript,
+            configuration.structured_maximum_attempts,
+        )
+    )
 
 
 def run_scene(
@@ -76,6 +113,7 @@ def run_scene(
         working_directory=Path(tempfile.mkdtemp(prefix=f"resym_{scene.value}_")),
         realization=_build_realization(context, event_sink),
         event_sink=event_sink,
+        object_advisor=planning_object_agent(recorder),
     )
 
     print(
