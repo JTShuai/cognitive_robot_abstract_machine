@@ -210,6 +210,38 @@ def test_initialization_scans_to_review_queue_and_loads_only_approved_factories(
     )
 
 
+# %% trusted platform initialization
+
+
+def test_official_vocabulary_is_available_without_review(tmp_path, monkeypatch) -> None:
+    discovered = vocabulary()
+    monkeypatch.setattr(
+        "resym.platform.grounding_catalog.discover_default_grounding_vocabulary",
+        lambda: discovered,
+    )
+    initialization = initialize_grounding_factories(tmp_path)
+
+    assert initialization.reviewed_vocabulary == discovered
+    assert all(
+        item.trusted_platform and item.reviewed_by is None
+        for item in initialization.workspace.vocabulary_candidates()
+    )
+    initialization.submit_candidate(candidate())
+    assert initialization.workspace.specifications() == ()
+
+
+def test_official_scan_replaces_old_pending_vocabulary(tmp_path, monkeypatch) -> None:
+    discovered = vocabulary()
+    workspace = GroundingFactoryWorkspace(tmp_path)
+    workspace.synchronize_vocabulary(discovered, discovery_scope="platform-default")
+    monkeypatch.setattr(
+        "resym.platform.grounding_catalog.discover_default_grounding_vocabulary",
+        lambda: discovered,
+    )
+
+    assert initialize_grounding_factories(tmp_path).reviewed_vocabulary == discovered
+
+
 def test_agent_candidate_stays_non_executable_until_human_approval(tmp_path) -> None:
     workspace = GroundingFactoryWorkspace(tmp_path)
     workspace.submit(candidate())

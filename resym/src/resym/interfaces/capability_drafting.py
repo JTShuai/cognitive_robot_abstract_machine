@@ -141,10 +141,10 @@ def draft_capability_contract_candidates(
         for _ in range(maximum_attempts):
             proposal = completer.complete(
                 DRAFTING_AGENT_NAME,
-                _draft_prompt(draft, existing, objections),
+                capability_contract_prompt(draft, existing, objections),
                 CapabilityContractDraftModel,
             )
-            candidate, objections = _candidate(draft, proposal)
+            candidate, objections = capability_contract_candidate(draft, proposal)
             if candidate is not None:
                 objections = contract_objections(candidate, drafts_by_id, approved)
             if candidate is not None and not objections:
@@ -190,7 +190,7 @@ def _aligned(
     return replace(candidate, contract=result.apply(candidate.contract)), None
 
 
-def _candidate(
+def capability_contract_candidate(
     draft: CoraplexCapabilityContractDraft, proposal: CapabilityContractDraftModel
 ) -> tuple[CapabilityContractCandidate | None, tuple[str, ...]]:
     """
@@ -256,11 +256,12 @@ def _candidate(
     return candidate, ()
 
 
-def _draft_prompt(
+def capability_contract_prompt(
     draft: CoraplexCapabilityContractDraft,
     existing: tuple[CapabilityContract, ...],
     objections: tuple[str, ...],
 ) -> str:
+    """Render the contract drafting instructions for API or external authors."""
     return render_prompt(
         "draft_capability_contract",
         action=draft.render(),

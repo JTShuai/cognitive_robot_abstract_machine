@@ -115,10 +115,10 @@ def draft_grounding_factory_candidates(
         for _ in range(maximum_attempts):
             draft = completer.complete(
                 DRAFTING_AGENT_NAME,
-                _draft_prompt(request, vocabulary, objections),
+                grounding_factory_prompt(request, vocabulary, objections),
                 GroundingFactoryDraftModel,
             )
-            candidate = _candidate(request, draft)
+            candidate = grounding_factory_candidate(request, draft)
             objections = validator.candidate_objections(candidate)
             if not objections:
                 workspace.submit(candidate)
@@ -136,9 +136,10 @@ def draft_grounding_factory_candidates(
     )
 
 
-def _candidate(
+def grounding_factory_candidate(
     request: GroundingFactoryRequest, draft: GroundingFactoryDraftModel
 ) -> GroundingFactoryCandidate:
+    """Build a pending factory from a declared relation and an author's reply."""
     return GroundingFactoryCandidate(
         candidate_id=(
             f"draft-{request.semantic_name}-{text_checksum(draft.source_code)[:12]}"
@@ -154,11 +155,12 @@ def _candidate(
     )
 
 
-def _draft_prompt(
+def grounding_factory_prompt(
     request: GroundingFactoryRequest,
     vocabulary: GroundingVocabulary,
     objections: tuple[str, ...],
 ) -> str:
+    """Render factory drafting instructions for API or external authors."""
     roles = ", ".join(
         f"{role.name}: {role.symbol_type.python_type_ref}" for role in request.roles
     )

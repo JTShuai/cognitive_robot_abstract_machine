@@ -109,6 +109,8 @@ docker run --rm \
   uv run --active --no-sync python -m resym.observability.viewer \
     runs \
     --grounding-workspace tmp/grounding_factory_workspace \
+    --contract-workspace tmp/contract_workspace \
+    --realization-workspace tmp/realization_workspace \
     --host 0.0.0.0
 ```
 
@@ -138,18 +140,21 @@ Start the review Viewer locally:
 ```bash
 uv run --no-sync python -m resym.observability.viewer \
   resym/runs \
-  --grounding-workspace resym/tmp/grounding_factory_workspace
+  --grounding-workspace resym/tmp/grounding_factory_workspace \
+  --contract-workspace resym/tmp/contract_workspace \
+  --realization-workspace resym/tmp/realization_workspace
 ```
 
 The ontology installer downloads pinned SOMA and IEEE 1872 files. The corpus
 installer downloads, verifies, preprocesses, and freezes the pinned UniDomain
 release. Both use versioned manifests and SHA-256 checksums. The generated
-data, local grounding workspace, and review decisions remain outside Git.
+data, local review workspaces, and review decisions remain outside Git.
 
 ### Configure the LLM
 
-This step is needed only for runs that use the repair agent. Credentials and
-model settings stay outside version control:
+Configure this before calling an LLM for task understanding, initialization
+drafting, or repair. Browsing and reviewing existing candidates does not
+require an LLM. Credentials and model settings stay outside version control:
 
 ```bash
 cp resym/.env.example resym/.env
@@ -158,24 +163,114 @@ cp resym/config/llm.example.json resym/config/llm.json
 
 Set `CLIENT_TYPE`, `API_KEY`, and `BASE_URL` in `resym/.env`. Set the model,
 generation arguments, and retry policy in `resym/config/llm.json`. LLM calls
-go through `llm-agent-kit`; `run_in_docker.sh` injects `resym/.env` only for
-the `smoke` and `experiment` commands.
+go through `llm-agent-kit`. For local LLM commands, use
+`uv run --env-file resym/.env --no-sync ...` from the monorepo root to load
+credentials. For container commands, pass `--with-llm-credentials` to
+`run_in_docker.sh`; it forwards `resym/.env` into the container.
+`resym-init draft --config ...` loads the model configuration and constructs
+the client. Starting the Viewer does not call an LLM.
+
+### Prepare initialization drafts
+
+Initialization is an explicit setup operation. Daily task execution loads
+approved artifacts without rerunning it. The commands below run from the
+monorepo root after installation. For an existing environment that has not
+installed the new entry point, replace `resym-init` with
+`python -m resym.interfaces.initialization`.
+
+```bash
+uv run --no-sync resym-init prepare --workspace resym/tmp
+```
+
+This scans the official interfaces and writes authoring materials to
+`resym/tmp/initialization/`: `instructions.md`, `platform.json`, `jobs.json`,
+and a `responses/` directory. Each job contains its instructions and response
+JSON schema. No credentials are needed, and nothing is approved automatically.
+Use `--action <source_id>` to limit the scanned actions selected for drafting;
+the IDs are listed in `platform.json`.
+
+Grounding also needs a description of the relations the deployment requires.
+Edit the generated `grounding_requests.json` using
+`grounding_requests.schema.json`, then run `prepare` again. Each request gives
+`proposed_uid`, `semantic_name`, `meaning`, typed `roles`, and optional bounded
+`parameters`. Alternatively supply a JSON array with `--requests <file>`.
+The scanner does not invent task relations; an empty requests list produces
+no grounding jobs.
+
+Choose either drafting route:
+
+- **External assistant, without `.env`:** ask the assistant to read
+  `resym/tmp/initialization/instructions.md` and write the job responses to
+  `responses/<job_id>.json`. Then import them:
+
+  ```bash
+  uv run --no-sync resym-init import --workspace resym/tmp --generated-by codex
+  ```
+
+  To read replies from another directory, pass it after `import`.
+
+- **Configured API model:** load credentials and run drafting. Valid replies
+  go through the same import checks automatically:
+
+  ```bash
+  uv run --env-file resym/.env --no-sync resym-init draft \
+    --workspace resym/tmp --config resym/config/llm.json
+  ```
+
+  For Docker, use the same initialization stages through the runtime script:
+
+  ```bash
+  ./resym/scripts/run_in_docker.sh resym-init prepare --workspace tmp
+  ./resym/scripts/run_in_docker.sh --with-llm-credentials resym-init draft \
+    --workspace tmp --config config/llm.json
+  ./resym/scripts/run_in_docker.sh resym-init import --workspace tmp --generated-by codex
+  ```
+
+`import_report.json` records submitted, already present, missing and invalid
+responses. API exchanges are saved in `llm_transcript.jsonl`. API drafting
+skips saved responses; repeated imports do not duplicate identical candidates.
+Invalid external responses can be corrected and imported again. Import checks
+source consistency and candidate structure; it never executes factory source.
 
 ### Complete the first-start review
 
-For either setup path, open
-<http://127.0.0.1:5000/grounding-factories>. At startup, reSym scans the
-installed kRrood and Semantic Digital Twin query primitives. New or changed
-items enter the review queue. Enter a reviewer name and approve only the
-vocabulary entries whose metadata and semantics are correct. Agent-authored
-factory candidates appear on the same page; approval validates and
-materializes them into the local workspace before they become executable.
-Restarting with the same workspace preserves decisions when source checksums
-have not changed. The workspace is local and ignored by Git.
+Both startup commands enable three persistent review workspaces:
 
-The `/capabilities` page shows the Coraplex actions discovered at startup,
-their reviewed `CapabilityContract` mappings, robot requirements, and any
-unmapped actions that still need platform integration.
+| Workspace under `resym/tmp/` | Content | Viewer page |
+|---|---|---|
+| `grounding_factory_workspace/` | Query source records, factory candidates, `catalog.json`, approved Python modules under `approved/` | `/grounding-factories` |
+| `contract_workspace/` | Contract candidates, approved `contracts.json`, review log | `/capabilities` |
+| `realization_workspace/` | Action-parameter mapping candidates, approved `realizations.json`, review log | `/capabilities` |
+
+1. Open <http://127.0.0.1:5000/grounding-factories>. Startup scans the installed
+   kRrood and Semantic Digital Twin query vocabulary. These official interfaces
+   are trusted and immediately available for factory drafting; no per-interface
+   approval is required. The page displays their signatures and source checksums.
+2. Review factory candidates imported by the initialization program on the
+   same page. Approval validates the source and
+   materializes a local Python module that predicate plans can reference.
+3. Open <http://127.0.0.1:5000/capabilities> to inspect discovered Coraplex
+   actions and review the submitted contracts.
+4. After approving contracts, run `prepare` again with the same workspace.
+   It now generates realization jobs for the approved contracts. Use either
+   drafting route above, then review the resulting mappings on `/capabilities`.
+   They bind contract roles, context values, or constants to native action
+   parameters and declare required robot resources. Approving a contract
+   alone does not make its action executable.
+
+Each stage persists its output, so the initialization process can exit before
+human review. Repeated preparation skips pending or approved artifacts.
+After rejecting a candidate, run `prepare` again: the new job includes the
+reviewer's feedback and keeps the old response for reference.
+If a native source changed after preparation, prepare fresh jobs before
+importing. Human review is the only step that approves generated assets.
+The drawer demo independently uses reference artifacts from the experiments package.
+
+Reuse the same workspace paths when loading catalogs for task execution.
+Official query vocabulary refreshes automatically on startup. Generated factories
+remain subject to source and dependency checksums; changes require factory review.
+Approved factories and review records stay local and
+outside Git; approval does not publish them to a remote repository.
 
 ## Running
 

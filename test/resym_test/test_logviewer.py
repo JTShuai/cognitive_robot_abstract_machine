@@ -721,6 +721,23 @@ def test_grounding_factory_page_reviews_scanned_eql_vocabulary(tmp_path):
     assert workspace.reviewed_vocabulary().entries == (selected,)
 
 
+def test_official_vocabulary_page_has_no_review_controls(tmp_path):
+    workspace = GroundingFactoryWorkspace(tmp_path / "grounding")
+    workspace.synchronize_vocabulary(vocabulary(), trusted_platform=True)
+    client = create_app(
+        tmp_path / "runs",
+        grounding_workspace=workspace,
+        grounding_vocabulary=workspace.reviewed_vocabulary(),
+    ).test_client()
+
+    response = client.get("/grounding-factories")
+    assert response.status_code == 200
+    page = response.get_data(as_text=True)
+    assert "trusted platform" in page
+    assert "Approve vocabulary symbol" not in page
+    assert vocabulary().entries[0].qualified_name in page
+
+
 def test_capability_catalog_separates_actions_awaiting_semantic_review():
     from resym.observability.viewer import _render_capability_catalog
 

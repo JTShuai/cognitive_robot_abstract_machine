@@ -156,6 +156,11 @@ class GroundingVocabularyCandidate:
     Source-backed symbol discovered during initialization.
     """
 
+    trusted_platform: bool = False
+    """
+    Discovered from the installed official platform; no vocabulary review is needed.
+    """
+
     review_status: GroundingFactoryReviewStatus = (
         GroundingFactoryReviewStatus.PENDING_REVIEW
     )
@@ -520,9 +525,11 @@ class GroundingFactoryWorkspace:
         self,
         discovered: GroundingVocabulary,
         discovery_scope: str = "default",
+        trusted_platform: bool = False,
     ) -> None:
         """
-        Update the review queue while preserving unchanged decisions.
+        Refresh source records, trusting official interfaces and preserving other
+        reviews.
         """
         records = self.vocabulary_candidates()
         discovered_names = {entry.qualified_name for entry in discovered.entries}
@@ -540,8 +547,19 @@ class GroundingFactoryWorkspace:
         ]
         for entry in discovered.entries:
             previous = existing.get(entry.qualified_name)
+            if trusted_platform:
+                synchronized.append(
+                    GroundingVocabularyCandidate(
+                        entry=entry,
+                        trusted_platform=True,
+                        review_status=GroundingFactoryReviewStatus.APPROVED,
+                        discovery_scope=discovery_scope,
+                    )
+                )
+                continue
             if (
                 previous is not None
+                and not previous.trusted_platform
                 and previous.entry.source_checksum == entry.source_checksum
             ):
                 synchronized.append(
@@ -579,7 +597,7 @@ class GroundingFactoryWorkspace:
 
     def reviewed_vocabulary(self) -> GroundingVocabulary:
         """
-        Return only unchanged EQL symbols approved by a human.
+        Return trusted platform symbols and approved additional query helpers.
         """
         return GroundingVocabulary(
             tuple(
@@ -1101,7 +1119,8 @@ class GroundingFactoryInitialization:
 
     reviewed_vocabulary: GroundingVocabulary
     """
-    Unchanged symbols explicitly approved for candidate composition.
+    Trusted official interfaces and reviewed helpers available for candidate
+    composition.
     """
 
     catalog: GroundingFactoryCatalog
@@ -1140,7 +1159,9 @@ def initialize_grounding_factories(
     capability_feasibility_implementations: Mapping[str, Callable] | None = None,
 ) -> GroundingFactoryInitialization:
     """
-    Scan query sources, update their review queue, and load approved factories.
+    Load official query vocabulary without review and load approved factories.
+
+    Explicit package roots are additional sources and retain vocabulary review.
     """
     discovered = (
         discover_default_grounding_vocabulary()
@@ -1148,7 +1169,11 @@ def initialize_grounding_factories(
         else discover_grounding_vocabulary(package_roots)
     )
     workspace = GroundingFactoryWorkspace(workspace_root)
-    workspace.synchronize_vocabulary(discovered, discovery_scope="platform-default")
+    workspace.synchronize_vocabulary(
+        discovered,
+        discovery_scope="platform-default",
+        trusted_platform=package_roots is None,
+    )
     return GroundingFactoryInitialization(
         workspace=workspace,
         discovered_vocabulary=discovered,

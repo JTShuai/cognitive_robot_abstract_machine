@@ -2368,7 +2368,9 @@ def _render_grounding_factories(
             if unavailable_cards
             else ""
         )
-        + "<h2>Scanned EQL review queue</h2>"
+        + "<h2>Query interface sources</h2>"
+        + "<p>Official CRAM/kRrood interfaces are trusted automatically. "
+        "Generated factories still require human review.</p>"
         + (
             vocabulary_candidate_cards
             or "<p class=muted>No source scan has been synchronized.</p>"
@@ -2391,7 +2393,11 @@ def _render_grounding_vocabulary_candidate(
     Render one source-discovered EQL symbol and its review controls.
     """
     entry = candidate.entry
-    status = str(candidate.review_status)
+    status = (
+        "trusted platform"
+        if candidate.trusted_platform
+        else str(candidate.review_status)
+    )
     controls = ""
     if status == "pending-review":
         approve_url = url_for(

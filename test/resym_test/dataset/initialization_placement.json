@@ -1,0 +1,9 @@
+{
+  "parameter_sources": [
+    {"parameter": "object_designator", "kind": "role", "value": "patient"},
+    {"parameter": "target_location", "kind": "role", "value": "destination"},
+    {"parameter": "arm", "kind": "context", "value": "manipulation_arm"}
+  ],
+  "required_resources": [],
+  "rationale": "Map the reviewed placement participants to the native action inputs."
+}

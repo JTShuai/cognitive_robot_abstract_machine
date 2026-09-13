@@ -19,6 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
+resym-init = "resym.interfaces.initialization:main"
 resym-install-ontologies = "resym.retrieval.ontology_installation:main"
 resym-install-corpus = "resym.retrieval.corpus_installation:main"
 
@@ -53,6 +54,7 @@ resym = [
     "retrieval/ontology_sources.json",
     "retrieval/corpus_source.json",
     "llm/prompts/*.md",
+    "interfaces/initialization_instructions.md",
 ]
 
 [tool.pytest.ini_options]
