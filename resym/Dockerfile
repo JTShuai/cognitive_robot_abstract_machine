@@ -40,7 +40,8 @@ WORKDIR ${CRAM_SRC}
 RUN source /opt/ros/jazzy/setup.bash \
     && source "${OVERLAY_WS}/install/setup.bash" \
     && source "${CRAM_VENV}/bin/activate" \
-    && uv sync --extra dev --active \
+    # && uv sync --extra dev --active \
+    && uv sync --locked --extra dev --active \
     && uv run --active --no-sync resym-install-ontologies \
     && uv run --active --no-sync resym-install-corpus
 

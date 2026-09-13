@@ -1,10 +1,10 @@
 """
 Drawer-domain grounding assets, initialized through the platform review flow.
 
-The platform ships no predicate semantics. This module declares what the drawer
-experiments need: the reviewed query-helper vocabulary, the factory requests a model
-drafts EQL candidates for, and a deterministic bootstrap that submits the pinned
-reference implementations through the same candidate-review flow for benches and tests,
+The platform ships no predicate semantics. This module declares what the drawer domain
+needs: the reviewed query-helper vocabulary, the factory requests a model drafts EQL
+candidates for, and a deterministic bootstrap that submits the pinned reference
+implementations through the same candidate-review flow for demonstrations and tests,
 where no model or reviewer is in the loop.
 """
 
@@ -42,7 +42,7 @@ from experiments.resym.drawer_kinematic_oracle import DRAWER_FEASIBILITY
 
 DEFAULT_WORKSPACE_ROOT = EXPERIMENTS_ROOT / "tmp" / "grounding_factory_workspace"
 """
-Standard local review workspace of the drawer experiments.
+Standard local review workspace of the drawer grounding assets.
 """
 
 REFERENCE_DIRECTORY = Path(__file__).parent / "grounding_references"
@@ -56,7 +56,7 @@ GROUNDING_QUERY_HELPERS = (
     joint_fraction,
 )
 """
-Domain query helpers this experiment asks to have in the EQL vocabulary.
+Domain query helpers the drawer domain asks to have in the EQL vocabulary.
 """
 
 JOINT_FRACTION_OPENED_UID = "resym:grounding/joint-fraction-opened"

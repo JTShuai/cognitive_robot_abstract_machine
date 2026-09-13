@@ -1,9 +1,9 @@
 """
-Access to articulated CRAM objects for the articulation experiments.
+Access to articulated CRAM objects of the drawer domain.
 
-These accessors are the domain vocabulary the experiments' grounding factories are
-drafted against and the scene setup drives joints with; the platform itself carries no
-predicate semantics for them.
+These accessors are the domain vocabulary the drawer grounding factories are drafted
+against and the scene setup drives joints with; the platform itself carries no predicate
+semantics for them.
 """
 
 from __future__ import annotations

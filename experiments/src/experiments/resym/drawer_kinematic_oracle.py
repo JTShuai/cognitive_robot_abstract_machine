@@ -1,8 +1,8 @@
 """
-Controlled drawer oracle used only by the symbolic-model experiments.
+Controlled drawer oracle of the drawer domain.
 
-This module provides deterministic state transitions and reachability labels for the
-fault-injection benchmark. Production task execution uses Coraplex.
+Deterministic state transitions and reachability verdicts for drawers, used wherever a
+task runs without a physical robot. Production task execution uses Coraplex.
 """
 
 from __future__ import annotations
@@ -66,7 +66,7 @@ if TYPE_CHECKING:
 INVERSE_KINEMATICS_ITERATION_BUDGET = 1000
 """
 Iteration budget of one reachability attempt (the same budget CRAM's ``reachable``
-predicate uses); exhausting it makes the query fail with a resource-limit diagnostic.
+predicate uses); a target not reached within it counts as unreachable.
 """
 
 COLLISION_DETECTION_DISTANCE = 0.005
@@ -318,8 +318,9 @@ def _arm_reaches(
     a joint solution within the budget, and the collision check must
     find that solution collision-free (the target and its parent are
     expected contacts of a grasp and therefore ignored). A proven-unreachable
-    target or a colliding configuration returns false; exhausting the inverse-
-    kinematics budget raises a grounding failure.
+    target, a target the solver cannot reach within the budget, or a colliding
+    configuration returns false, the same verdict CRAM's own ``reachable`` predicate
+    gives.
     """
     base_T_target = world_T_base.inverse() @ target_body.global_transform
     base_P_target = base_T_target.to_position()
@@ -342,11 +343,7 @@ def _arm_reaches(
     except UnreachableException:
         return False
     except MaxIterationsException:
-        raise GroundingFailure(
-            GroundingFailureCode.RESOURCE_LIMIT,
-            f"IK iteration budget ({INVERSE_KINEMATICS_ITERATION_BUDGET}) "
-            "exhausted without a Boolean result",
-        )
+        return False
     return not _reaching_configuration_collides(
         context, world_T_base, solution, target_body
     )

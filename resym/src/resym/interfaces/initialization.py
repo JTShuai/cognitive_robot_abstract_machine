@@ -18,7 +18,7 @@ from resym.core.grounding_model import (
     GroundingFactoryReviewStatus,
     text_checksum,
 )
-from resym.core.symbol_types import SymbolType
+from resym.core.symbol_types import SymbolType, resolve_symbol_type
 from resym.interfaces.capability_drafting import (
     CapabilityContractDraftModel,
     capability_contract_candidate,
@@ -32,6 +32,8 @@ from resym.interfaces.grounding_drafting import (
 from resym.interfaces.initialization_models import (
     DraftJob,
     GroundingRequest,
+    GroundingRelationsDraft,
+    GroundingProposalRecord,
     InitializationKind,
     RealizationDraft,
 )
@@ -81,6 +83,7 @@ class InitializationFile(StrEnum):
     RESPONSES = "responses"
     REQUESTS = "grounding_requests.json"
     REQUEST_SCHEMA = "grounding_requests.schema.json"
+    PROPOSALS = "grounding_proposals.json"
     INSTRUCTIONS = "instructions.md"
     REPORT = "import_report.json"
     TRANSCRIPT = "llm_transcript.jsonl"
@@ -114,6 +117,10 @@ class ImportReport:
     """Jobs without a saved response."""
     failed: dict[str, str] = field(default_factory=dict)
     """Invalid responses and their actionable objections."""
+    proposed: list[str] = field(default_factory=list)
+    """Relation identities saved for factory drafting, without approval."""
+    prepared: list[str] = field(default_factory=list)
+    """New factory jobs ready for the next drafting pass."""
 
 
 @dataclass
@@ -170,6 +177,7 @@ class Initialization:
         self.materials.mkdir(parents=True, exist_ok=True)
         (self.materials / InitializationFile.RESPONSES).mkdir(exist_ok=True)
         request_path = self.materials / InitializationFile.REQUESTS
+        automatic_relations = requests is None
         if requests is None:
             requests = (
                 tuple(
@@ -230,36 +238,13 @@ class Initialization:
                 )
         if kind in (None, InitializationKind.REALIZATION):
             jobs.extend(self._realization_jobs(selected, contracts))
-        if kind in (None, InitializationKind.GROUNDING):
-            covered = {item.uid for item in grounding.catalog}
-            covered.update(
-                item.proposed_uid
-                for item in grounding.workspace.candidates()
-                if item.review_status is GroundingFactoryReviewStatus.PENDING_REVIEW
-            )
-            for needed in requests:
-                if needed.proposed_uid not in covered:
-                    objections = tuple(
-                        f"{item.candidate_id}: {item.review_note or 'Rejected by reviewer'}"
-                        for item in grounding.workspace.candidates()
-                        if item.review_status is GroundingFactoryReviewStatus.REJECTED
-                        and item.proposed_uid == needed.proposed_uid
-                    )
-                    prompt = grounding_factory_prompt(
-                        needed.request(), grounding.reviewed_vocabulary, objections
-                    )
-                    prompt += (
-                        "\n\nComplete parameter constraints:\n"
-                        + needed.model_dump_json(indent=2)
-                    )
-                    jobs.append(
-                        _job(
-                            InitializationKind.GROUNDING,
-                            prompt,
-                            _checksum(to_json(grounding.reviewed_vocabulary)),
-                            grounding_request=needed,
-                        )
-                    )
+        if kind in (None, InitializationKind.GROUNDING, InitializationKind.RELATIONS):
+            if automatic_relations and not requests:
+                job = self._relation_job(selected, grounding)
+                if job.job_id not in self._relation_records():
+                    jobs.append(job)
+            if kind is not InitializationKind.RELATIONS:
+                jobs.extend(self._grounding_jobs(requests, grounding))
         _write_json(
             self.materials / InitializationFile.JOBS,
             [item.model_dump(mode="json") for item in jobs],
@@ -277,6 +262,213 @@ class Initialization:
             encoding="utf-8",
         )
         return tuple(jobs)
+
+    # %% relation proposals
+
+    def _relation_records(self) -> dict[str, GroundingProposalRecord]:
+        """Imported relation replies and their authorship evidence."""
+        path = self.materials / InitializationFile.PROPOSALS
+        return (
+            TypeAdapter(dict[str, GroundingProposalRecord]).validate_json(
+                path.read_text()
+            )
+            if path.exists()
+            else {}
+        )
+
+    def _relation_checksum(
+        self, action_ids: tuple[str, ...], grounding: GroundingFactoryInitialization
+    ) -> str:
+        """Fingerprint the query vocabulary and selected native action sources."""
+        actions = {item.source_id: item for item in self.actions()}
+        if set(action_ids) - actions.keys():
+            raise InvalidInitializationDraft(
+                "Native actions changed; run prepare again."
+            )
+        return _checksum(
+            {
+                "vocabulary": to_json(grounding.reviewed_vocabulary),
+                "actions": {
+                    identity: action_source_checksum(
+                        installed_coraplex_root(), actions[identity].source_file
+                    )
+                    for identity in action_ids
+                },
+            }
+        )
+
+    def _relation_job(
+        self,
+        actions: tuple[CoraplexCapabilityContractDraft, ...],
+        grounding: GroundingFactoryInitialization,
+    ) -> DraftJob:
+        """Ask for grounded relation meanings before requesting factory source."""
+        action_ids = tuple(item.source_id for item in actions)
+        sources = dict.fromkeys(item.source_file for item in actions)
+        prompt = render_prompt(
+            "propose_grounding_relations",
+            vocabulary=grounding.reviewed_vocabulary.render(),
+            actions="\n\n".join(item.render() for item in actions)
+            + "\n\n"
+            + "\n\n".join(
+                f"{source}:\n{(installed_coraplex_root() / source).read_text()}"
+                for source in sources
+            ),
+            factories="\n".join(item.uid for item in grounding.catalog) or "none",
+        )
+        return _job(
+            InitializationKind.RELATIONS,
+            prompt,
+            self._relation_checksum(action_ids, grounding),
+            relation_action_ids=action_ids,
+        )
+
+    def _validate_relations(
+        self, job: DraftJob, response: GroundingRelationsDraft
+    ) -> None:
+        """Check references and conflicts without approving the proposed meanings."""
+        grounding = self.grounding()
+        if (
+            self._relation_checksum(job.relation_action_ids, grounding)
+            != job.source_checksum
+        ):
+            raise InvalidInitializationDraft(
+                "Platform query or action sources changed; run prepare again."
+            )
+        vocabulary = {
+            item.qualified_name for item in grounding.reviewed_vocabulary.entries
+        }
+        path = self.materials / InitializationFile.REQUESTS
+        existing = {
+            item.proposed_uid: item
+            for item in TypeAdapter(list[GroundingRequest]).validate_json(
+                path.read_text()
+            )
+        }
+        seen: set[str] = set()
+        for proposal in response.relations:
+            needed = proposal.request
+            if needed.proposed_uid in seen:
+                raise InvalidInitializationDraft(
+                    f"Duplicate relation identity: {needed.proposed_uid}"
+                )
+            seen.add(needed.proposed_uid)
+            unknown = set(proposal.query_references) - vocabulary
+            if unknown:
+                raise InvalidInitializationDraft(
+                    f"Unscanned query references: {sorted(unknown)}"
+                )
+            if (
+                needed.proposed_uid in existing
+                and existing[needed.proposed_uid] != needed
+            ):
+                raise InvalidInitializationDraft(
+                    f"Conflicting relation request: {needed.proposed_uid}"
+                )
+            request = needed.request()
+            for role in request.roles:
+                try:
+                    resolve_symbol_type(role.symbol_type)
+                except (ImportError, AttributeError, TypeError, ValueError) as error:
+                    raise InvalidInitializationDraft(
+                        f"Invalid role type: {role.symbol_type.python_type_ref}"
+                    ) from error
+            if len({role.name for role in request.roles}) != len(request.roles):
+                raise InvalidInitializationDraft(
+                    f"Duplicate roles in {needed.proposed_uid}"
+                )
+            if len({parameter.name for parameter in request.parameters}) != len(
+                request.parameters
+            ):
+                raise InvalidInitializationDraft(
+                    f"Duplicate parameters in {needed.proposed_uid}"
+                )
+
+    def _import_relations(
+        self,
+        job: DraftJob,
+        response: GroundingRelationsDraft,
+        author: str,
+        report: ImportReport,
+    ) -> None:
+        """Persist relation requests and append factory jobs to the current batch."""
+        self._validate_relations(job, response)
+        records = self._relation_records()
+        record = GroundingProposalRecord(
+            source_checksum=job.source_checksum, generated_by=author, response=response
+        )
+        path = self.materials / InitializationFile.REQUESTS
+        requests = TypeAdapter(list[GroundingRequest]).validate_json(path.read_text())
+        by_uid = {item.proposed_uid: item for item in requests}
+        for proposal in response.relations:
+            by_uid.setdefault(proposal.request.proposed_uid, proposal.request)
+        if job.job_id in records and records[job.job_id].response == response:
+            report.existing.append(job.job_id)
+        else:
+            records[job.job_id] = record
+            _write_json(
+                path, [item.model_dump(mode="json") for item in by_uid.values()]
+            )
+            _write_json(
+                self.materials / InitializationFile.PROPOSALS,
+                {
+                    identity: item.model_dump(mode="json")
+                    for identity, item in records.items()
+                },
+            )
+            report.proposed.extend(
+                item.request.proposed_uid for item in response.relations
+            )
+        jobs = list(self.jobs())
+        known = {item.job_id for item in jobs}
+        for factory_job in self._grounding_jobs(
+            tuple(by_uid.values()), self.grounding()
+        ):
+            if factory_job.job_id not in known:
+                jobs.append(factory_job)
+                report.prepared.append(factory_job.job_id)
+        _write_json(
+            self.materials / InitializationFile.JOBS,
+            [item.model_dump(mode="json") for item in jobs],
+        )
+
+    def _grounding_jobs(
+        self,
+        requests: tuple[GroundingRequest, ...],
+        grounding: GroundingFactoryInitialization,
+    ) -> list[DraftJob]:
+        """Prepare missing factory implementations from relation requests."""
+        covered = {item.uid for item in grounding.catalog}
+        covered.update(
+            item.proposed_uid
+            for item in grounding.workspace.candidates()
+            if item.review_status is GroundingFactoryReviewStatus.PENDING_REVIEW
+        )
+        jobs = []
+        for needed in requests:
+            if needed.proposed_uid in covered:
+                continue
+            objections = tuple(
+                f"{item.candidate_id}: {item.review_note or 'Rejected by reviewer'}"
+                for item in grounding.workspace.candidates()
+                if item.review_status is GroundingFactoryReviewStatus.REJECTED
+                and item.proposed_uid == needed.proposed_uid
+            )
+            prompt = grounding_factory_prompt(
+                needed.request(), grounding.reviewed_vocabulary, objections
+            )
+            prompt += "\n\nComplete parameter constraints:\n" + needed.model_dump_json(
+                indent=2
+            )
+            jobs.append(
+                _job(
+                    InitializationKind.GROUNDING,
+                    prompt,
+                    _checksum(to_json(grounding.reviewed_vocabulary)),
+                    grounding_request=needed,
+                )
+            )
+        return jobs
 
     def _realization_jobs(
         self,
@@ -364,6 +556,9 @@ class Initialization:
                     response.model_dump_json()
                 ):
                     author = "initialization-api"
+                if job.kind is InitializationKind.RELATIONS:
+                    self._import_relations(job, response, author, report)
+                    continue
                 candidate, workspace = self._candidate(job, response, author)
                 existing = {item.candidate_id for item in workspace.candidates()}
                 if candidate.candidate_id in existing:
@@ -479,6 +674,23 @@ class Initialization:
     def draft(
         self, completer: StructuredCompleter, maximum_attempts: int = 3
     ) -> ImportReport:
+        """Draft relations and their factory follow-ups through the shared import path."""
+        report = self._draft_once(completer, maximum_attempts)
+        while report.prepared:
+            follow_up = self._draft_once(completer, maximum_attempts)
+            follow_up.submitted = list(
+                dict.fromkeys(report.submitted + follow_up.submitted)
+            )
+            follow_up.proposed = list(
+                dict.fromkeys(report.proposed + follow_up.proposed)
+            )
+            report = follow_up
+        _write_json(self.materials / InitializationFile.REPORT, to_json(report))
+        return report
+
+    def _draft_once(
+        self, completer: StructuredCompleter, maximum_attempts: int
+    ) -> ImportReport:
         """Draft unanswered jobs, feed back validation errors, then use common import."""
         failures = {}
         api_path = self.materials / InitializationFile.API_RESPONSES
@@ -494,7 +706,10 @@ class Initialization:
                         prompt,
                         _response_type(job.kind),
                     )
-                    self._candidate(job, response, "initialization-api")
+                    if job.kind is InitializationKind.RELATIONS:
+                        self._validate_relations(job, response)
+                    else:
+                        self._candidate(job, response, "initialization-api")
                     self.response_path(job).write_text(
                         response.model_dump_json(indent=2), encoding="utf-8"
                     )
@@ -524,6 +739,7 @@ def _response_type(kind: InitializationKind) -> type[BaseModel]:
         InitializationKind.CONTRACT: CapabilityContractDraftModel,
         InitializationKind.GROUNDING: GroundingFactoryDraftModel,
         InitializationKind.REALIZATION: RealizationDraft,
+        InitializationKind.RELATIONS: GroundingRelationsDraft,
     }[kind]
 
 
@@ -605,7 +821,9 @@ def main() -> None:
             f"Prepared {len(jobs)} jobs in {initialization.materials}. See instructions.md."
         )
         print(
-            "Grounding jobs require declared relations in --requests; rerun prepare after reviewing contracts for realization jobs."
+            "Without declared relations, the model proposes grounding requests first. "
+            "API drafting continues to factory drafts; external imports export follow-up jobs. "
+            "Rerun prepare after reviewing contracts for realization jobs."
         )
         return
     if command is InitializationCommand.DRAFT:

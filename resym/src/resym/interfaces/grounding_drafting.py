@@ -1,6 +1,6 @@
 """Initialization-stage drafting of grounding-factory candidates.
 
-A deployment declares the predicate-grounding relations it needs as
+Deployment or agent-proposed relations are represented as
 :class:`GroundingFactoryRequest` records; a language model drafts one bounded
 native-EQL candidate per request against the reviewed vocabulary. Every
 accepted draft is only *submitted* to the local review workspace — a human

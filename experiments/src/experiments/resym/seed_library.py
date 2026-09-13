@@ -1,5 +1,5 @@
 """
-Task model constructed from the reviewed platform catalogs for experiments.
+Drawer task model constructed from the reviewed platform catalogs.
 """
 
 from __future__ import annotations
@@ -142,8 +142,7 @@ def build_fixed_arm_library(catalog: GroundingFactoryCatalog) -> SymbolLibrary:
     predicate — reachability from the mount is a grounding fact (``ready-to-interact``),
     not something an action achieves.
 
-    Both manipulation directions are modeled; the P2 fault templates delete or distort
-    pieces of this library to create repair tasks with known ground truth.
+    Both manipulation directions are modeled.
     """
     library = SymbolLibrary()
     library.add(

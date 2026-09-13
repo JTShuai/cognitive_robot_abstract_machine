@@ -37,7 +37,7 @@ def initialization(tmp_path, monkeypatch):
 
 
 def test_external_contract_import_is_pending_and_repeatable(initialization):
-    jobs = initialization.prepare(action_ids=(PLACE_ACTION,))
+    jobs = initialization.prepare(action_ids=(PLACE_ACTION,), requests=())
     (job,) = jobs
     assert job.kind is InitializationKind.CONTRACT
     assert job.response_schema
@@ -55,7 +55,7 @@ def test_external_contract_import_is_pending_and_repeatable(initialization):
 
 
 def test_api_draft_reuses_import_and_skips_saved_responses(initialization):
-    initialization.prepare(action_ids=(PLACE_ACTION,))
+    initialization.prepare(action_ids=(PLACE_ACTION,), requests=())
     completer, client = completer_with(draft_response())
     first = initialization.draft(completer)
     second = initialization.draft(completer)
@@ -65,30 +65,30 @@ def test_api_draft_reuses_import_and_skips_saved_responses(initialization):
 
 
 def test_rejected_contract_can_be_redrafted_with_review_feedback(initialization):
-    (first_job,) = initialization.prepare(action_ids=(PLACE_ACTION,))
+    (first_job,) = initialization.prepare(action_ids=(PLACE_ACTION,), requests=())
     completer, _ = completer_with(draft_response())
     initialization.draft(completer)
     workspace = CapabilityContractWorkspace(initialization.contract_root)
     note = "Clarify the destination role."
     workspace.reject(workspace.candidates()[0].candidate_id, "human", note)
 
-    (next_job,) = initialization.prepare(action_ids=(PLACE_ACTION,))
+    (next_job,) = initialization.prepare(action_ids=(PLACE_ACTION,), requests=())
     assert next_job.job_id != first_job.job_id
     assert note in next_job.prompt
     assert not initialization.response_path(next_job).exists()
 
 
 def test_realization_jobs_require_an_approved_contract(initialization):
-    initialization.prepare(action_ids=(PLACE_ACTION,))
+    initialization.prepare(action_ids=(PLACE_ACTION,), requests=())
     completer, _ = completer_with(draft_response())
     initialization.draft(completer)
-    assert initialization.prepare(action_ids=(PLACE_ACTION,)) == ()
+    assert initialization.prepare(action_ids=(PLACE_ACTION,), requests=()) == ()
 
     workspace = CapabilityContractWorkspace(initialization.contract_root)
     workspace.approve(
         workspace.candidates()[0].candidate_id, "human", initialization.actions()
     )
-    (job,) = initialization.prepare(action_ids=(PLACE_ACTION,))
+    (job,) = initialization.prepare(action_ids=(PLACE_ACTION,), requests=())
     assert job.kind is InitializationKind.REALIZATION
     assert job.contract_uid == workspace.approved_contracts()[0].uid
 
@@ -106,7 +106,7 @@ def test_realization_jobs_require_an_approved_contract(initialization):
         realizations, candidate.candidate_id, "human", workspace.approved_contracts()
     )
     assert approval.realization.capability_uid == job.contract_uid
-    assert initialization.prepare(action_ids=(PLACE_ACTION,)) == ()
+    assert initialization.prepare(action_ids=(PLACE_ACTION,), requests=()) == ()
 
 
 def test_external_grounding_uses_the_same_source_validator(initialization):

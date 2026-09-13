@@ -7,9 +7,10 @@ Both are inputs the paper assumes, not contributions. The annotation itself is C
 :class:`WorldReasoner` classifies drawers, handles, doors and wardrobes from the
 kinematic structure with its persisted ripple-down rules.
 
-Two robots are assembled here: the mobile PR2 (P3 material) and the fixed-arm Tracy (the
-IAI TraceBot dual-UR10e table setup with Robotiq grippers) the P2 experiments run on.
-Capability support is derived directly from each CRAM robot annotation.
+Two robots are assembled here: the mobile PR2, which navigates to a drawer before
+opening it, and the fixed-arm Tracy (the IAI TraceBot dual-UR10e table setup with
+Robotiq grippers), for which reachability is a plain grounding fact. Capability support
+is derived directly from each CRAM robot annotation.
 """
 
 from __future__ import annotations
@@ -200,17 +201,19 @@ def load_fixed_arm_scene(scene: Scene = Scene.APARTMENT, variation=None) -> Scen
     world.merge_world(household)
     annotate_with_world_reasoner(world)
 
-    mount.origin = _fixed_arm_mount_pose(world, scene, variation)
+    mount.origin = fixed_arm_mount_pose(world, scene, variation)
     world.notify_state_change()
     return SceneSetup(world=world, robot=robot, scene=scene)
 
 
-def _fixed_arm_mount_pose(world: World, scene: Scene, variation=None):
+def fixed_arm_mount_pose(world: World, scene: Scene, variation=None):
     """
     The table pose beside the scene's goal drawer, computed from the annotated handle
     and drawer geometry.
 
-    The table stands on the floor; only its planar placement is derived.
+    The table stands on the floor; only its planar placement is derived. ``variation``
+    carries ``front_offset_delta`` and ``side_offset_delta`` in meters, added to the two
+    standoffs, so one loaded scene can be re-placed without reloading.
     """
     from semantic_digital_twin.semantic_annotations.semantic_annotations import (
         Drawer,

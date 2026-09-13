@@ -1,5 +1,5 @@
 """
-Identifiers of the drawer and kitchen experiments' capability contracts.
+Identifiers of the drawer domain's capability contracts.
 
 The contracts themselves are the reference artifact
 ``capability_references/contracts.json``, admitted into a review workspace at

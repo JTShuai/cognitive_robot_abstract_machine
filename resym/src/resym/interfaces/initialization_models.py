@@ -24,6 +24,7 @@ class InitializationKind(StrEnum):
     CONTRACT = "contract"
     REALIZATION = "realization"
     GROUNDING = "grounding"
+    RELATIONS = "relations"
 
 
 class GroundingRequest(BaseModel):
@@ -56,6 +57,40 @@ class GroundingRequest(BaseModel):
                 for item in self.parameters
             ),
         )
+
+
+class GroundingRelationProposal(BaseModel):
+    """A suggested relation with references to scanned query interfaces."""
+
+    model_config = ConfigDict(extra="forbid")
+    request: GroundingRequest
+    """Relation meaning and typed factory inputs."""
+    query_references: list[str] = Field(min_length=1)
+    """Qualified names from the scanned query vocabulary."""
+    rationale: str = Field(min_length=1)
+    """How the cited interfaces support the relation."""
+
+
+class GroundingRelationsDraft(BaseModel):
+    """Relations proposed for factory drafting, without execution authority."""
+
+    model_config = ConfigDict(extra="forbid")
+    relations: list[GroundingRelationProposal]
+    """Supported relation candidates; an empty list is a valid outcome."""
+    limitations: str = Field(min_length=1)
+    """Missing support or limits on the proposed coverage."""
+
+
+class GroundingProposalRecord(BaseModel):
+    """Imported relation proposal with its author and platform fingerprint."""
+
+    model_config = ConfigDict(extra="forbid")
+    source_checksum: str
+    """Query and action source fingerprint at preparation."""
+    generated_by: str
+    """Author responsible for the proposal."""
+    response: GroundingRelationsDraft
+    """Relations, query evidence and declared limitations."""
 
 
 class NativeParameterSource(BaseModel):
@@ -110,3 +145,5 @@ class DraftJob(BaseModel):
     """Exact approved contract used to prepare the realization job."""
     grounding_request: GroundingRequest | None = None
     """Declared relation for a grounding job."""
+    relation_action_ids: tuple[str, ...] = ()
+    """Native actions supplying context for relation discovery."""

@@ -1,7 +1,7 @@
 """
-Reviewed realizations of the experiment's capabilities by native Coraplex actions.
+Reviewed realizations of the drawer domain's capabilities by native Coraplex actions.
 
-Benches and tests bootstrap these into a realization workspace through the same
+Demonstrations and tests bootstrap these into a realization workspace through the same
 candidate-review flow a live deployment drives from the review Viewer, so the runtime
 catalog is identical whether a human or this bootstrap approved it.
 """
@@ -68,7 +68,7 @@ from resym.platform.coraplex_realizations import (
 
 DEFAULT_REALIZATION_WORKSPACE_ROOT = EXPERIMENTS_ROOT / "tmp" / "realization_workspace"
 """
-Standard local workspace the experiment bootstraps its realizations into.
+Standard local workspace the bootstrap admits the realizations into.
 """
 
 

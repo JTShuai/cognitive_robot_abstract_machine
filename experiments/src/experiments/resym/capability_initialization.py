@@ -1,8 +1,8 @@
 """
-Initialization of the experiment's capability contracts.
+Initialization of the drawer domain's capability contracts.
 
-The reference contracts are a JSON artifact; benches and tests admit them through the
-same candidate-review flow a live deployment drives from the review Viewer, so the
+The reference contracts are a JSON artifact; demonstrations and tests admit them through
+the same candidate-review flow a live deployment drives from the review Viewer, so the
 library holds identical contracts whether a human or this bootstrap approved them.
 """
 
@@ -24,12 +24,12 @@ from resym.platform.coraplex_catalog import discover_coraplex_capability_contrac
 
 REFERENCE_CONTRACTS = Path(__file__).parent / "capability_references" / "contracts.json"
 """
-The reviewed contracts of the experiment platform.
+The reviewed contracts of the drawer domain.
 """
 
 DEFAULT_CONTRACT_WORKSPACE_ROOT = EXPERIMENTS_ROOT / "tmp" / "contract_workspace"
 """
-Standard local workspace the experiment bootstraps its contracts into.
+Standard local workspace the bootstrap admits the contracts into.
 """
 
 
