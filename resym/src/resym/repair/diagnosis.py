@@ -29,7 +29,7 @@ from resym.repair.certificate import (
 from resym.platform.grounding_context import EvaluationContext
 from resym.planning.execution.engine import ExecutionReport
 from resym.planning.state_evaluation import ground
-from resym.planning.pddl import PlanNotFoundError
+from resym.planning.pddl import UnsolvableProblemError
 from resym.planning.pipeline import (
     InvalidGroundingFactoryBindingError,
     Nogood,
@@ -131,9 +131,13 @@ def diagnose(
                 error.issues,
             ),
         )
-    except PlanNotFoundError as error:
+    except UnsolvableProblemError as error:
         selection = select_for_goal(library, goal)
-        grounding = ground(selection, universe, context)
+        grounding = (
+            error.grounding
+            if error.grounding is not None
+            else ground(selection, universe, context)
+        )
         return TaskDiagnosis(
             succeeded=False,
             certificate=certify_unsolvable(

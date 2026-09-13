@@ -6,10 +6,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import cache
+from collections import deque
 
 from krrood.entity_query_language.factories import entity, variable
 from semantic_digital_twin.world_description.geometry import Color
 from semantic_digital_twin.world_description.world_entity import Body
+from semantic_digital_twin.world_description.world_entity import SemanticAnnotation
+from semantic_digital_twin.semantic_annotations.mixins import (
+    IsStorageSpace,
+    HasSupportingSurface,
+)
+from semantic_digital_twin.robots.robot_parts import AbstractRobot
+from semantic_digital_twin.reasoning.predicates import InsideOf, is_supported_by
 from typing_extensions import Iterable, Mapping
 
 from resym.core.symbol_types import SymbolType, resolve_symbol_type
@@ -25,6 +33,23 @@ class ObjectQuerySpec:
     type_ref: str | None = None
     color: str | None = None
     name_contains: str | None = None
+
+
+@dataclass(frozen=True)
+class ObjectDependency:
+    """
+    A native annotation required to access a related object.
+    """
+
+    object_name: str
+    """
+    Name of the discovered object.
+    """
+
+    related_to: str
+    """
+    Object from which this dependency was reached.
+    """
 
 
 @cache
@@ -102,6 +127,119 @@ class KrroodObjectResolver:
     """
 
     universe: ObjectUniverse
+
+    def dependencies(
+        self,
+        seeds: Iterable[str],
+        required_types: Iterable[SymbolType],
+    ) -> tuple[ObjectDependency, ...]:
+        """
+        Follow annotation references and storage owners in the current world.
+
+        Owner traversal fills missing typed roles without including every sibling.
+        Occupants lead to their storage owner, not to other occupants. Native references
+        are discovery hints, not predicate truth.
+        """
+        by_identity = {
+            id(item.semantic_entity): name
+            for name, item in self.universe.objects.items()
+            if isinstance(item.semantic_entity, SemanticAnnotation)
+        }
+        references: dict[str, set[str]] = {
+            name: set() for name in self.universe.objects
+        }
+        owners: dict[str, set[str]] = {name: set() for name in self.universe.objects}
+        for name, item in self.universe.objects.items():
+            annotation = item.semantic_entity
+            if not isinstance(annotation, SemanticAnnotation):
+                continue
+            occupants = (
+                {id(occupant) for occupant in annotation.objects}
+                if isinstance(annotation, IsStorageSpace)
+                else set()
+            )
+            for reference in annotation._referenced_semantic_annotations():
+                related = by_identity.get(id(reference))
+                if related is None:
+                    continue
+                owners[related].add(name)
+                if id(reference) not in occupants:
+                    references[name].add(related)
+        seeds = frozenset(seeds)
+        for dependency in self._spatial_owners(seeds):
+            owners[dependency.related_to].add(dependency.object_name)
+        typed_candidates = [
+            {item.name for item in self.universe.of_type(symbol_type)}
+            for symbol_type in required_types
+        ]
+        pending = deque(sorted(seeds))
+        visited = set(pending)
+        branches = set(seeds)
+        result = []
+        while pending:
+            source = pending.popleft()
+            for target in sorted(references[source]):
+                if target in visited:
+                    continue
+                if source not in branches and not any(
+                    target in candidates and candidates.isdisjoint(visited)
+                    for candidates in typed_candidates
+                ):
+                    continue
+                branches.add(target)
+                visited.add(target)
+                pending.append(target)
+                result.append(ObjectDependency(target, source))
+            for target in sorted(owners[source]):
+                if target in visited:
+                    continue
+                visited.add(target)
+                pending.append(target)
+                result.append(ObjectDependency(target, source))
+        return tuple(result)
+
+    def _spatial_owners(self, seeds: Iterable[str]) -> Iterable[ObjectDependency]:
+        """
+        Query support or containment overlap only for seeded bodies with geometry.
+
+        Any containment overlap is a candidate hint, not an ``inside`` truth value.
+        Unloaded geometry has no spatial evidence; typed expansion remains available.
+        """
+        owners = {
+            id(item.semantic_entity): item
+            for item in self.universe.objects.values()
+            if isinstance(item.semantic_entity, HasSupportingSurface)
+            and item.body._world is not None
+            and item.body.combined_mesh is not None
+        }
+        for name in sorted(seeds):
+            item = self.universe[name]
+            if (
+                isinstance(item.semantic_entity, AbstractRobot)
+                or item.body._world is None
+                or item.body.combined_mesh is None
+            ):
+                continue
+            domain = tuple(
+                owner.semantic_entity
+                for owner in owners.values()
+                if owner.body is not item.body and owner.body._world is item.body._world
+            )
+            if not domain:
+                continue
+            candidate = variable(HasSupportingSurface, domain=domain)
+            supporting = (
+                entity(candidate)
+                .where(is_supported_by(item.body, candidate.root))
+                .evaluate()
+            )
+            supported_by = {id(owner) for owner in supporting}
+            for annotation in domain:
+                if (
+                    id(annotation) in supported_by
+                    or InsideOf(item.body, annotation.root)() > 0.0
+                ):
+                    yield ObjectDependency(owners[id(annotation)].name, name)
 
     def resolve(self, spec: ObjectQuerySpec) -> tuple[GroundedObject, ...]:
         semantic_domain = tuple(

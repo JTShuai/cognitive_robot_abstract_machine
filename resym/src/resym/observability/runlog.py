@@ -120,6 +120,8 @@ def summarize_task_result(result: TaskResult) -> dict:
         "plan": [action_str(action) for action in result.plan],
         "execution": summarize_execution(result.execution),
         "replanning_rounds": result.replanning_rounds,
+        "scope_expansions": result.scope_expansions,
+        "scope_seconds": round(result.scope_seconds, 4),
         "evaluation_count": result.evaluation_count,
         "grounding_seconds": round(result.grounding_seconds, 4),
         "planning_seconds": round(result.planning_seconds, 4),

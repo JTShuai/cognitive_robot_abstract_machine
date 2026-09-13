@@ -19,6 +19,7 @@ from typing_extensions import Optional
 
 from resym.core.symbols import Literal, SymbolLibrary
 from resym.core.symbol_types import is_symbol_subtype
+from resym.interfaces.object_selection import PlanningObjectAgent
 from resym.llm.prompting import render_predicates, render_prompt
 from resym.llm.schemas import GoalTranslation
 from resym.llm.structured import StructuredCompleter
@@ -191,10 +192,14 @@ def diagnose_instruction(
     universe: ObjectUniverse,
     context: EvaluationContext,
     working_directory: Path,
+    planning_object_completer: Optional[StructuredCompleter] = None,
     **solve_arguments,
 ) -> NaturalLanguageTaskDiagnosis:
     """
     Understand an instruction and enter the existing task workflow.
+
+    With ``planning_object_completer``, a :class:`PlanningObjectAgent` bound to the
+    instruction recommends planning objects to the task workflow.
 
     A clear missing relation produces a deterministic
     ``MISSING_PREDICATE_MODEL`` certificate without sending an invalid goal to
@@ -226,6 +231,10 @@ def diagnose_instruction(
         return NaturalLanguageTaskDiagnosis(
             understanding,
             TaskDiagnosis(succeeded=False, certificate=certificate),
+        )
+    if planning_object_completer is not None:
+        solve_arguments["object_advisor"] = PlanningObjectAgent(
+            planning_object_completer, instruction=instruction
         )
     return NaturalLanguageTaskDiagnosis(
         understanding,

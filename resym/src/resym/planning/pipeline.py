@@ -1,7 +1,7 @@
 """The per-task loop: select, ground, plan, execute, verify.
 
 No learned component runs in here. Selection is symbol-table lookup,
-grounding computes a complete Boolean state, planning is Fast Downward,
+grounding computes the selected object scope's Boolean state, planning is Fast Downward,
 execution is monitored and effect-checked, and
 the goal is independently re-verified at the end. A failed round records
 a nogood and re-enters the loop on the changed world; a plan identical
@@ -12,7 +12,7 @@ loop cannot burn its rounds repeating a failure unchanged.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from typing_extensions import Optional
@@ -38,17 +38,24 @@ from resym.planning.state_evaluation import ground
 from resym.planning.events import (
     PipelineEvent,
     PipelineEventSink,
+    ObjectScopeExpansionReason,
     action_payload,
     emit_event,
     literal_payload,
 )
 from resym.planning.pddl import (
     GroundAction,
+    UnsolvableProblemError,
     plan as run_planner,
     write_domain,
     write_problem,
 )
-from resym.planning.selection import select_for_goal
+from resym.planning.selection import select_for_goal, Selection
+from resym.planning.object_scope import (
+    ObjectScopeAdvisor,
+    PlanningObjectScope,
+    PlanningObjectSelector,
+)
 from resym.platform.universe import ObjectUniverse
 
 
@@ -100,6 +107,12 @@ class TaskResult:
 
     evaluation_count: int = 0
     """Total predicate evaluations across all grounding rounds."""
+
+    scope_expansions: int = 0
+    """Object-set expansions, counted independently of execution retries."""
+
+    scope_seconds: float = 0.0
+    """Time spent selecting objects and querying their dependencies."""
 
     grounding_seconds: float = 0.0
     """Wall-clock time spent computing truth values."""
@@ -193,6 +206,7 @@ def solve_task(
     check_postconditions: bool = True,
     event_sink: Optional[PipelineEventSink] = None,
     available_capabilities: frozenset[str] | None = None,
+    object_advisor: Optional[ObjectScopeAdvisor] = None,
 ) -> TaskResult:
     """Solve one symbolic goal on the current world using the persistent
     library.
@@ -275,64 +289,20 @@ def solve_task(
         raise InvalidGroundingFactoryBindingError(
             missing_grounding_factories, goal=goal, selection=selection
         )
-    task_universe = universe.for_task(selection, goal)
-    emit_event(
-        event_sink,
-        PipelineEvent.TASK_OBJECTS_SELECTED,
-        total_objects=len(universe.objects),
-        selected_objects=list(task_universe.objects),
-    )
     failed_plans: set[tuple[GroundAction, ...]] = set()
     for round_index in range(maximum_replanning_rounds):
         emit_event(event_sink, PipelineEvent.ROUND_STARTED, round=round_index + 1)
-        grounding_start = time.perf_counter()
-        try:
-            grounding = ground(selection, task_universe, context)
-        except GroundingFailure as error:
-            emit_event(
-                event_sink,
-                PipelineEvent.GROUNDING_FAILED,
-                round=round_index + 1,
-                code=error.code.value,
-                detail=error.detail,
-                atom=(literal_payload(error.atom) if error.atom is not None else None),
-            )
-            raise
-        grounding_seconds = time.perf_counter() - grounding_start
-        result.grounding_seconds += grounding_seconds
-        result.evaluation_count += grounding.evaluation_count
-        emit_event(
-            event_sink,
-            PipelineEvent.GROUNDING_COMPLETED,
-            round=round_index + 1,
-            evaluations=grounding.evaluation_count,
-            true=len(grounding.true_atoms),
-            false=len(grounding.false_atoms),
-            seconds=round(grounding_seconds, 4),
-        )
-
-        result.domain_text = write_domain(selection, name="resym")
-        result.problem_text = write_problem(
-            task_universe,
-            grounding.true_atoms,
+        actions = _plan_object_scopes(
+            selection,
+            universe,
+            context,
             goal,
-            domain_name="resym",
-            name=f"task-round-{round_index}",
-            selection=selection,
-        )
-        planning_start = time.perf_counter()
-        emit_event(event_sink, PipelineEvent.PLANNING_STARTED, round=round_index + 1)
-        actions = run_planner(
-            result.domain_text, result.problem_text, working_directory
-        )
-        planning_seconds = time.perf_counter() - planning_start
-        result.planning_seconds += planning_seconds
-        emit_event(
+            working_directory,
+            round_index + 1,
+            result,
+            failed_plans,
             event_sink,
-            PipelineEvent.PLAN_GENERATED,
-            round=round_index + 1,
-            actions=[action_payload(action) for action in actions],
-            seconds=round(planning_seconds, 4),
+            object_advisor,
         )
 
         plan_key = tuple(actions)
@@ -350,7 +320,7 @@ def solve_task(
         result.execution = execute(
             actions,
             library,
-            task_universe,
+            universe,
             context,
             realization,
             check_postconditions=check_postconditions,
@@ -361,7 +331,7 @@ def solve_task(
                 check_goal(
                     goal,
                     library,
-                    task_universe,
+                    universe,
                     context,
                     event_sink=event_sink,
                 )
@@ -448,6 +418,182 @@ def solve_task(
     raise ReplanningLimitExceededError(
         result.replanning_rounds, result.execution, tuple(result.nogoods)
     )
+
+
+# %% object scope attempts
+
+
+def _plan_object_scopes(
+    selection: Selection,
+    universe: ObjectUniverse,
+    context: EvaluationContext,
+    goal: tuple[Literal, ...],
+    working_directory: Path,
+    round_number: int,
+    result: TaskResult,
+    failed_plans: set[tuple[GroundAction, ...]],
+    event_sink: Optional[PipelineEventSink],
+    object_advisor: Optional[ObjectScopeAdvisor] = None,
+) -> list[GroundAction]:
+    """Plan on growing object sets against the current, unchanged world state."""
+    selector = PlanningObjectSelector(
+        universe, selection, goal, context.robot, advisor=object_advisor
+    )
+    scope_start = time.perf_counter()
+    scope = selector.initial()
+    scope_seconds = time.perf_counter() - scope_start
+    result.scope_seconds += scope_seconds
+    _emit_advice(event_sink, round_number, 1, scope, 0)
+    attempt = 0
+    result.domain_text = write_domain(selection, name="resym")
+    while True:
+        attempt += 1
+        task_universe = scope.universe(universe)
+        emit_event(
+            event_sink,
+            PipelineEvent.TASK_OBJECTS_SELECTED,
+            round=round_number,
+            attempt=attempt,
+            total_objects=len(universe.objects),
+            seconds=round(scope_seconds, 4),
+            selected_objects=sorted(scope.object_names),
+            inclusion_reasons={
+                name: asdict(reason) for name, reason in scope.inclusion_reasons.items()
+            },
+        )
+        grounding_start = time.perf_counter()
+        try:
+            grounding = ground(
+                selection, universe, context, active_universe=task_universe
+            )
+        except GroundingFailure as error:
+            emit_event(
+                event_sink,
+                PipelineEvent.GROUNDING_FAILED,
+                round=round_number,
+                code=error.code.value,
+                detail=error.detail,
+                atom=literal_payload(error.atom) if error.atom is not None else None,
+            )
+            raise
+        grounding_seconds = time.perf_counter() - grounding_start
+        result.grounding_seconds += grounding_seconds
+        result.evaluation_count += grounding.evaluation_count
+        emit_event(
+            event_sink,
+            PipelineEvent.GROUNDING_COMPLETED,
+            round=round_number,
+            attempt=attempt,
+            evaluations=grounding.evaluation_count,
+            true=len(grounding.true_atoms),
+            false=len(grounding.false_atoms),
+            seconds=round(grounding_seconds, 4),
+        )
+        result.problem_text = write_problem(
+            task_universe,
+            grounding.true_atoms,
+            goal,
+            domain_name="resym",
+            name=f"task-round-{round_number}-scope-{attempt}",
+            selection=selection,
+        )
+        emit_event(
+            event_sink,
+            PipelineEvent.PLANNING_STARTED,
+            round=round_number,
+            attempt=attempt,
+        )
+        planning_start = time.perf_counter()
+        try:
+            try:
+                actions = run_planner(
+                    result.domain_text,
+                    result.problem_text,
+                    working_directory / f"round-{round_number}" / f"scope-{attempt}",
+                )
+            finally:
+                planning_seconds = time.perf_counter() - planning_start
+                result.planning_seconds += planning_seconds
+        except UnsolvableProblemError as error:
+            expansion_reason = ObjectScopeExpansionReason.UNSOLVABLE_SUBSET
+            scope_start = time.perf_counter()
+            expanded = selector.expand(scope, expansion_reason, str(error))
+            scope_seconds = time.perf_counter() - scope_start
+            result.scope_seconds += scope_seconds
+            if expanded is None:
+                error.grounding = grounding
+                emit_event(
+                    event_sink,
+                    PipelineEvent.OBJECT_SCOPE_EXHAUSTED,
+                    round=round_number,
+                    attempt=attempt,
+                    selected_objects=sorted(scope.object_names),
+                )
+                raise
+        else:
+            expansion_reason = ObjectScopeExpansionReason.REPEATED_FAILED_PLAN
+            scope_start = time.perf_counter()
+            can_expand = tuple(actions) in failed_plans and (
+                result.execution is None
+                or result.execution.violation
+                not in {
+                    ExecutionViolation.PLATFORM_UNSUPPORTED,
+                    ExecutionViolation.PRECONDITION_GROUNDING_FAILED,
+                    ExecutionViolation.POSTCONDITION_GROUNDING_FAILED,
+                }
+            )
+            expanded = (
+                selector.expand(
+                    scope,
+                    expansion_reason,
+                    "the plan "
+                    + " ".join(str(action) for action in actions)
+                    + " already failed in execution",
+                )
+                if can_expand
+                else None
+            )
+            scope_seconds = time.perf_counter() - scope_start
+            result.scope_seconds += scope_seconds
+            if expanded is None:
+                emit_event(
+                    event_sink,
+                    PipelineEvent.PLAN_GENERATED,
+                    round=round_number,
+                    actions=[action_payload(action) for action in actions],
+                    seconds=round(planning_seconds, 4),
+                )
+                return actions
+        emit_event(
+            event_sink,
+            PipelineEvent.OBJECT_SCOPE_EXPANDED,
+            round=round_number,
+            attempt=attempt,
+            reason=expansion_reason,
+            added_objects=sorted(expanded.object_names - scope.object_names),
+        )
+        result.scope_expansions += 1
+        _emit_advice(event_sink, round_number, attempt + 1, expanded, len(scope.advice))
+        scope = expanded
+
+
+def _emit_advice(
+    event_sink: Optional[PipelineEventSink],
+    round_number: int,
+    attempt: int,
+    scope: PlanningObjectScope,
+    already_reported: int,
+) -> None:
+    """Report every advisor consultation the scope gained since the last attempt."""
+    for advice in scope.advice[already_reported:]:
+        emit_event(
+            event_sink,
+            PipelineEvent.OBJECT_SCOPE_ADVISED,
+            round=round_number,
+            attempt=attempt,
+            recommendations=[asdict(item) for item in advice.recommendations],
+            trace=list(advice.trace),
+        )
 
 
 def _grounding_factory_supported(

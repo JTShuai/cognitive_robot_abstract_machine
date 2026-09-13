@@ -18,6 +18,15 @@ if TYPE_CHECKING:
 PipelineEventSink: TypeAlias = Callable[[str, dict[str, Any]], None]
 
 
+class ObjectScopeExpansionReason(StrEnum):
+    """
+    Evidence that triggers another object-set attempt.
+    """
+
+    UNSOLVABLE_SUBSET = "unsolvable_subset"
+    REPEATED_FAILED_PLAN = "repeated_failed_plan"
+
+
 class PipelineEvent(StrEnum):
     """
     One kind of structured event in a task's trace stream.
@@ -31,6 +40,9 @@ class PipelineEvent(StrEnum):
     TASK_UNSUPPORTED = "task_unsupported"
     GROUNDING_FACTORY_BINDING_INVALID = "grounding_factory_binding_invalid"
     TASK_OBJECTS_SELECTED = "task_objects_selected"
+    OBJECT_SCOPE_ADVISED = "object_scope_advised"
+    OBJECT_SCOPE_EXPANDED = "object_scope_expanded"
+    OBJECT_SCOPE_EXHAUSTED = "object_scope_exhausted"
     ROUND_STARTED = "round_started"
     GROUNDING_FAILED = "grounding_failed"
     GROUNDING_COMPLETED = "grounding_completed"

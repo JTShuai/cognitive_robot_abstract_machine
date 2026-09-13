@@ -13,13 +13,39 @@ import subprocess
 import sys
 import re
 from dataclasses import dataclass
+from enum import IntEnum
 from pathlib import Path
+from typing_extensions import TYPE_CHECKING
 
 from resym.core.symbols import Literal, Operator
 from resym.core.symbol_types import SymbolType, is_symbol_subtype
 from resym import PROJECT_ROOT
 from resym.planning.selection import Selection
 from resym.platform.universe import ObjectUniverse
+
+if TYPE_CHECKING:
+    from resym.planning.state_evaluation import GroundingResult
+
+
+class PlannerExitCode(IntEnum):
+    """
+    Native Fast Downward driver outcomes relevant to finite search.
+    """
+
+    SUCCESS = 0
+    SEARCH_PLAN_FOUND_AND_OUT_OF_MEMORY = 1
+    SEARCH_PLAN_FOUND_AND_OUT_OF_TIME = 2
+    SEARCH_PLAN_FOUND_AND_OUT_OF_MEMORY_AND_TIME = 3
+    TRANSLATE_UNSOLVABLE = 10
+    SEARCH_UNSOLVABLE = 11
+    SEARCH_UNSOLVED_INCOMPLETE = 12
+    TRANSLATE_OUT_OF_MEMORY = 20
+    TRANSLATE_OUT_OF_TIME = 21
+    SEARCH_OUT_OF_MEMORY = 22
+    SEARCH_OUT_OF_TIME = 23
+    SEARCH_OUT_OF_MEMORY_AND_TIME = 24
+    SEARCH_INPUT_ERROR = 33
+
 
 FAST_DOWNWARD_DIRECTORY_ENVIRONMENT_VARIABLE = "RESYM_FAST_DOWNWARD_DIRECTORY"
 """
@@ -53,6 +79,9 @@ class GroundAction:
     PDDL object names bound to the operator parameters, in order.
     """
 
+    def __str__(self) -> str:
+        return f"({' '.join((self.operator, *self.arguments))})"
+
     def binding(self, operator: Operator) -> dict[str, str]:
         """
         Map the operator's parameter variables to this action's objects.
@@ -62,11 +91,36 @@ class GroundAction:
 
 class PlanNotFoundError(Exception):
     """
-    Raised when the planner proves the projected problem unsolvable or fails.
+    Base error for a planner invocation that produced no usable plan.
     """
 
     def __init__(self, details: str):
         super().__init__(f"Fast Downward found no plan: {details}")
+
+
+class UnsolvableProblemError(PlanNotFoundError):
+    """
+    The planner proved the projected problem unsolvable.
+    """
+
+    def __init__(self, details: str):
+        super().__init__(details)
+        self.grounding: GroundingResult | None = None
+        """
+        Last evaluated initial state, attached when scope expansion is exhausted.
+        """
+
+
+class PlannerExecutionError(PlanNotFoundError):
+    """
+    A planner fault or incomplete search, not proof of an unsolvable task.
+    """
+
+
+class PlannerTimeoutError(PlannerExecutionError):
+    """
+    Translation or search exhausted its time allowance.
+    """
 
 
 class PlannerNotInstalledError(Exception):
@@ -209,8 +263,29 @@ def plan(
         text=True,
         cwd=working_directory,
     )
-    if completed.returncode != 0 or not plan_path.exists():
-        raise PlanNotFoundError(completed.stdout[-2000:] + completed.stderr[-500:])
+    details = completed.stdout[-2000:] + completed.stderr[-500:]
+    if completed.returncode in {
+        PlannerExitCode.TRANSLATE_UNSOLVABLE,
+        PlannerExitCode.SEARCH_UNSOLVABLE,
+    }:
+        raise UnsolvableProblemError(details)
+    if completed.returncode in {
+        PlannerExitCode.TRANSLATE_OUT_OF_TIME,
+        PlannerExitCode.SEARCH_OUT_OF_TIME,
+        PlannerExitCode.SEARCH_OUT_OF_MEMORY_AND_TIME,
+    }:
+        raise PlannerTimeoutError(details)
+    if (
+        completed.returncode
+        not in {
+            PlannerExitCode.SUCCESS,
+            PlannerExitCode.SEARCH_PLAN_FOUND_AND_OUT_OF_MEMORY,
+            PlannerExitCode.SEARCH_PLAN_FOUND_AND_OUT_OF_TIME,
+            PlannerExitCode.SEARCH_PLAN_FOUND_AND_OUT_OF_MEMORY_AND_TIME,
+        }
+        or not plan_path.exists()
+    ):
+        raise PlannerExecutionError(f"exit code {completed.returncode}: {details}")
     return _parse_plan(plan_path.read_text())
 
 

@@ -32,12 +32,66 @@ enters the query or execution path unreviewed.
 
 ```text
 natural-language task → structured goal (model gap or clarification if not expressible)
-  → Boolean grounding + PDDL planning → per-action precondition recheck
+  → select relevant symbols and an object subset → Boolean grounding + PDDL planning
+  → per-action precondition recheck
   → execution through capability bindings (Coraplex) → independent effect and goal checks
 failure → programmatic failure certificate → retrieval-augmented repair agent
   (UniDomain corpus, tool loop) → minimal model patch → curator admission
   → version store → replan
 ```
+
+### Task-scoped objects
+
+CRAM retains the full world. reSym starts planning with the goal objects and
+robot, follows native annotation references and storage owners, and queries
+SDT support/containment for the selected bodies where geometry is available.
+Structural dependencies can be reached through intermediate annotations that
+do not themselves need to enter PDDL. Looking up an owner does not pull in all
+sibling parts, and selecting a container does not pull in all its occupants.
+Missing operator parameter types receive an initial typed
+candidate; ordering is deterministic, not learned relevance.
+
+Only the selected objects participate in predicate argument enumeration and
+PDDL `:objects`. Grounding factories, execution and final checks retain access
+to the complete object directory and SDT: an excluded object can still make
+a bowl nonempty or obstruct motion. All selected ground atoms are evaluated;
+unevaluated atoms are not recorded as false by reSym.
+
+If the planner proves the subset unsolvable, candidate sets grow until a plan
+is found or the relevant types are exhausted. A repeated failed plan may also
+trigger expansion before it is refused. Timeouts, invalid planner inputs,
+unavailable capabilities and grounding failures are not scope evidence.
+Expansion does not consume execution-replanning rounds. Each new execution
+round re-reads relationships and truth values; object identities come from
+the supplied world directory. This does not guarantee a globally optimal plan.
+
+The live viewer displays selected/total object counts, inclusion reasons,
+scope attempts and expansions. Each attempt's PDDL files are saved under
+`round-N/scope-M/` in the task planning directory. Task results separately
+count predicate evaluations, scope expansions, and selection/planning time.
+
+An optional planning-object agent (`resym.interfaces.object_selection`) can
+add objects ahead of typed growth. It reuses the repair tool loop with three
+read-only tools: `query_candidate_objects` (type, colour, name fragment over
+the complete directory), `inspect_object_relations` (references, storage
+owners, support and containment hints) and `propose_planning_objects`
+(ordered names with a rationale each). The program resolves every name,
+rejects objects outside the typed bound, keeps goal objects and the robot
+unconditionally, and runs the queries itself; the model never supplies truth
+values. It is consulted once for the initial selection and again on every
+expansion with the planner's evidence; when it adds nothing, typed growth
+proceeds as before. Entering through `diagnose_instruction` binds the agent to
+the natural-language instruction; a goal given directly is advised from the
+goal literals alone. Consultations are recorded as `object_scope_advised`
+events and shown with each object's rationale in the viewer. The open-drawer
+experiment enables the agent when `RESYM_OBJECT_AGENT_CONFIG` names a
+language-model configuration.
+
+Goals with an interchangeable object ("any bowl") are not the selector's
+concern: `GoalTranslator` currently turns an ambiguous object reference into a
+clarification request, and keeping that existential reading would be a
+goal-language feature. Neither the selector nor the agent ever replaces an
+object already bound in the goal.
 
 ## Main concepts
 

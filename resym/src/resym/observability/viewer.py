@@ -1196,6 +1196,7 @@ def _render_live_execution(
         f"<div class=muted>goal: {html.escape(goal or 'waiting')} · {round_text}</div>"
         f"<div>{metrics}</div></div>{status_html}</div>"
         + _render_phase_strip(state["phase"])
+        + _render_object_scope(state)
         + "<div class=live-grid>"
         "<section class=card><h3>Grounded plan</h3>"
         "<p class=explain>✓ done · ▶ active · ○ pending. Open a step record "
@@ -1224,6 +1225,66 @@ def _render_live_execution(
         "rendered from (trace.jsonl) — the last 12 entries, for "
         "debugging.</p>"
         f"<div class='card timeline'>{timeline}</div>"
+    )
+
+
+# %% object scope display
+
+
+def _render_object_scope(state: dict) -> str:
+    """
+    Explain the active planning subset and its expansion history.
+    """
+    scope = state.get(PipelineEvent.TASK_OBJECTS_SELECTED)
+    if scope is None:
+        return ""
+    names = scope.get("selected_objects", [])
+    reasons = scope.get("inclusion_reasons", {})
+    rows = []
+    for name in names:
+        evidence = reasons.get(name, {})
+        reason = str(evidence.get("reason", ""))
+        related = evidence.get("related_to")
+        if related:
+            reason += f" ← {related}"
+        rationale = evidence.get("rationale") or ""
+        rows.append(
+            f"<tr><td>{html.escape(name)}</td><td>{html.escape(reason)}</td>"
+            f"<td>{html.escape(rationale)}</td></tr>"
+        )
+    advice = "".join(
+        "<details><summary>Advisor consultation "
+        f"{html.escape(str(record.get('attempt', '')))}: "
+        f"{len(record.get('recommendations', []))} recommendation(s)</summary><ul>"
+        + "".join(
+            f"<li>{html.escape(item.get('name', ''))}: {html.escape(item.get('rationale', ''))}</li>"
+            for item in record.get("recommendations", [])
+        )
+        + "</ul><ol>"
+        + "".join(
+            f"<li>{html.escape(str(event.get('tool', event.get('event', ''))))}"
+            f" {html.escape(str(event.get('observation', '')))}</li>"
+            for event in record.get("trace", [])
+            if event.get("event") == "tool_result"
+        )
+        + "</ol></details>"
+        for record in state.get(PipelineEvent.OBJECT_SCOPE_ADVISED, [])
+    )
+    expansions = state.get(PipelineEvent.OBJECT_SCOPE_EXPANDED, [])
+    history = "".join(
+        f"<li>{html.escape(str(record.get('reason', '')))}: "
+        f"{html.escape(', '.join(record.get('added_objects', [])))}</li>"
+        for record in expansions
+    )
+    return (
+        f"<section class=card><h3>Planning objects: {len(names)} / {html.escape(str(scope.get('total_objects', 0)))}</h3>"
+        "<p class=explain>Only this subset enters PDDL. World queries and Coraplex "
+        "still see the complete world.</p>"
+        f"<p>Scope attempt: {html.escape(str(scope.get('attempt', 1)))} · "
+        f"selection time: {html.escape(str(scope.get('seconds', 0)))} s</p>"
+        "<details id=planning-object-scope><summary>Objects and inclusion reasons</summary>"
+        f"<table><tr><th>Object</th><th>Reason</th><th>Rationale</th></tr>{''.join(rows)}</table></details>"
+        f"{advice}<ul>{history}</ul></section>"
     )
 
 
@@ -1328,6 +1389,9 @@ def _liveness_banner(state: dict, records: list[dict]) -> str:
 
 def _reduce_pipeline_events(records: list[dict]) -> dict:
     state = {
+        PipelineEvent.TASK_OBJECTS_SELECTED: None,
+        PipelineEvent.OBJECT_SCOPE_EXPANDED: [],
+        PipelineEvent.OBJECT_SCOPE_ADVISED: [],
         "goal": [],
         "round": None,
         "grounding": None,
@@ -1361,6 +1425,18 @@ def _reduce_pipeline_events(records: list[dict]) -> dict:
             state["coraplex_action"] = None
             state[PipelineEvent.PLATFORM_RESULT] = None
             state["checks"] = []
+        elif event == PipelineEvent.TASK_OBJECTS_SELECTED:
+            state[PipelineEvent.TASK_OBJECTS_SELECTED] = record
+            state["status"] = "grounding"
+            state["phase"] = "grounding"
+        elif event == PipelineEvent.OBJECT_SCOPE_ADVISED:
+            state[PipelineEvent.OBJECT_SCOPE_ADVISED].append(record)
+        elif event == PipelineEvent.OBJECT_SCOPE_EXPANDED:
+            state[PipelineEvent.OBJECT_SCOPE_EXPANDED].append(record)
+            state["status"] = "expanding planning objects"
+        elif event == PipelineEvent.OBJECT_SCOPE_EXHAUSTED:
+            state["status"] = "no plan in full candidate scope"
+            state["status_kind"] = "bad"
         elif event == PipelineEvent.GROUNDING_COMPLETED:
             state["grounding"] = record
             state["status"] = "planning"

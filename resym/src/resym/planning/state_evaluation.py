@@ -55,13 +55,17 @@ def ground(
     selection: Selection,
     universe: ObjectUniverse,
     context: EvaluationContext,
+    *,
+    active_universe: ObjectUniverse | None = None,
 ) -> GroundingResult:
     """
-    Evaluate every selected predicate over the typed active domain.
+    Evaluate the selected domain while queries retain access to the full universe.
     """
     result = GroundingResult()
     for predicate in selection.predicates.values():
-        for arguments in _typed_tuples(predicate, universe):
+        for arguments in _typed_tuples(
+            predicate, active_universe if active_universe is not None else universe
+        ):
             result.evaluation_count += 1
             atom = Literal(
                 predicate=predicate.name,

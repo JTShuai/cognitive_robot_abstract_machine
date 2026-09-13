@@ -18,6 +18,9 @@ from resym.interfaces.goal_translation import (
     UntranslatableGoalError,
     diagnose_instruction,
 )
+from resym.interfaces import goal_translation
+from resym.interfaces.object_selection import PlanningObjectAgent
+from resym.repair.diagnosis import TaskDiagnosis
 from resym.retrieval.index import RetrievalQuery
 from resym.llm.client import ScriptedCompletionClient
 from resym.llm.structured import StructuredCompleter
@@ -306,3 +309,34 @@ class TestGoalTranslation:
 
         assert understanding.status is TaskUnderstandingStatus.READY
         assert "already exists" in translator.completer.client.received_prompts[1]
+
+
+def test_instruction_entry_binds_the_object_agent_to_the_instruction(
+    monkeypatch, miniature_universe, tmp_path, library
+):
+    captured = {}
+
+    def fake_diagnose(*arguments, **keyword_arguments):
+        captured.update(keyword_arguments)
+        return TaskDiagnosis(succeeded=True)
+
+    monkeypatch.setattr(goal_translation, "diagnose", fake_diagnose)
+    translator = translator_with(goal_json("opened", "cabinet10-drawer-top"))
+    completer = StructuredCompleter(
+        client=ScriptedCompletionClient(responses=[]), transcript=TranscriptRecorder()
+    )
+
+    diagnose_instruction(
+        translator,
+        "open the top drawer",
+        library,
+        miniature_universe,
+        context=None,
+        working_directory=tmp_path,
+        planning_object_completer=completer,
+    )
+
+    advisor = captured["object_advisor"]
+    assert isinstance(advisor, PlanningObjectAgent)
+    assert advisor.instruction == "open the top drawer"
+    assert advisor.completer is completer

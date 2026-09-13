@@ -60,6 +60,8 @@ class FakeResult:
     plan: list = field(default_factory=list)
     execution: object = None
     replanning_rounds: int = 0
+    scope_expansions: int = 0
+    scope_seconds: float = 0.0
     evaluation_count: int = 0
     grounding_seconds: float = 0.0
     planning_seconds: float = 0.0

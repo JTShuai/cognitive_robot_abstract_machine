@@ -96,11 +96,7 @@ class ObjectUniverse:
 
     def for_task(self, selection, goal: tuple) -> ObjectUniverse:
         """
-        Keep only objects needed by a selected symbolic task.
-
-        Selection happens after natural-language grounding, so initial object reference
-        resolution still sees the full CRAM catalog.  The planner and predicate
-        grounding then receive only types used by the selected model.
+        Return the typed candidate upper bound for a selected symbolic task.
         """
         relevant_types = {
             symbol_type
