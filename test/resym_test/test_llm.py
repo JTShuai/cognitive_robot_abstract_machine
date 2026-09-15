@@ -8,6 +8,7 @@ package is importable (it needs ``openai``, absent in the cram container).
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 
 import pytest
 from pydantic import BaseModel
@@ -17,12 +18,16 @@ from resym.llm.client import (
     ScriptedCompletionClient,
     ScriptExhaustedError,
     UsageSource,
+    CompletionClient,
+    CompletionResult,
+    CompletionUsage,
 )
 from resym.llm.structured import (
     MalformedResponseError,
     StructuredCompleter,
     StructuredOutputRetriesExceededError,
     extract_json_block,
+    TruncatedOutputError,
 )
 from resym.llm.transcript import TranscriptRecorder
 
@@ -48,6 +53,66 @@ class Answer(BaseModel):
     """
 
     value: int
+
+
+@dataclass
+class OutputLimitedClient(CompletionClient):
+    """
+    Report measured token usage for a reply that ends at its configured limit.
+    """
+
+    response: str
+    """
+    Reply returned after increasing the output allowance.
+    """
+
+    limits: list[int | None] = field(default_factory=list)
+    """
+    Per-call output allowances requested by the caller.
+    """
+
+    initial_limit: int = 32
+    """
+    Small output allowance for exercising truncation handling.
+    """
+
+    always_truncate: bool = False
+    """
+    Whether increasing the output allowance still produces an incomplete reply.
+    """
+
+    def complete(self, prompt: str) -> str:
+        return self.complete_with_usage(prompt).text
+
+    def complete_with_usage(self, prompt: str) -> CompletionResult:
+        return self.complete_with_output_limit(prompt, None)
+
+    def complete_with_output_limit(
+        self, prompt: str, output_token_limit: int | None
+    ) -> CompletionResult:
+        self.limits.append(output_token_limit)
+        limit = output_token_limit or self.initial_limit
+        truncated = self.always_truncate or output_token_limit is None
+        return CompletionResult(
+            text="{" if truncated else self.response,
+            usage=CompletionUsage(10, limit if truncated else 10),
+            output_token_limit=limit,
+        )
+
+    @property
+    def description(self) -> str:
+        return "output-limited"
+
+
+def test_truncation_is_recorded_without_format_retries():
+    client = OutputLimitedClient(json.dumps({"value": 1}))
+    transcript = TranscriptRecorder()
+    completer = StructuredCompleter(client, transcript)
+    with pytest.raises(TruncatedOutputError):
+        completer.complete("test", "test", Answer)
+    assert client.limits == [None]
+    assert transcript.exchanges[0].output_token_limit == client.initial_limit
+    assert transcript.exchanges[0].output_limit_reached is True
 
 
 class TestScriptedClient:
@@ -517,6 +582,37 @@ class TestLanguageModelConfiguration:
 
 
 class TestRealAdapter:
+    @pytest.mark.parametrize("parameter", ["max_tokens", "max_completion_tokens"])
+    def test_output_override_uses_call_options(self, monkeypatch, parameter):
+        """
+        A per-call allowance reaches the kit without changing its saved settings.
+        """
+        pytest.importorskip("llm_agent_kit")
+        from resym.llm.configuration import (
+            LanguageModelConfiguration,
+            build_completion_client,
+        )
+
+        monkeypatch.setenv("API_KEY", "test-key-never-used")
+        initial_limit = 32
+        client = build_completion_client(
+            LanguageModelConfiguration(
+                agent={"model": "test-model", "kwargs": {parameter: initial_limit}}
+            )
+        )
+        calls = []
+
+        def complete(prompt, options=None):
+            calls.append(options)
+            client.usage_recorder.usage = CompletionUsage(10, 10)
+            return json.dumps({"value": 1})
+
+        monkeypatch.setattr(client.agent, "call", complete)
+        result = client.complete_with_output_limit("test", initial_limit * 2)
+        assert calls[0].extra == {parameter: initial_limit * 2}
+        assert result.output_token_limit == initial_limit * 2
+        assert client.complete_with_usage("test").output_token_limit == initial_limit
+
     def test_adapter_builds_from_llm_agent_kit_schema(self):
         """
         The adapter validates the raw sections with llm-agent-kit's own Pydantic models

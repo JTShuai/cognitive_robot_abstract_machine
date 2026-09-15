@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from typing_extensions import TYPE_CHECKING, Iterable, Protocol, Self
 
-from resym.core.symbol_types import SymbolType, is_symbol_subtype
+from resym.core.symbol_types import SymbolType, is_symbol_subtype, resolve_symbol_type
 
 if TYPE_CHECKING:
     from semantic_digital_twin.robots.robot_parts import AbstractRobot
@@ -48,6 +48,19 @@ class GroundedObject:
 
     def denotes(self, semantic_type: type) -> bool:
         return isinstance(self.semantic_entity, semantic_type)
+
+    def native_entity(self, expected: SymbolType) -> object:
+        """
+        Resolve the native entity satisfying a factory's declared role type.
+        """
+        native_type = resolve_symbol_type(expected)
+        if isinstance(self.semantic_entity, native_type):
+            return self.semantic_entity
+        if isinstance(self.body, native_type):
+            return self.body
+        raise TypeError(
+            f"Object '{self.name}' does not denote {expected.python_type_ref}"
+        )
 
 
 class WorldObjectExtractor(Protocol):

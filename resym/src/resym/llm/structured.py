@@ -39,9 +39,26 @@ class StructuredOutputRetriesExceededError(Exception):
     """
 
     def __init__(self, agent_name: str, attempts: int, last_error: str):
+        self.attempts = attempts
+        self.last_error = last_error
         super().__init__(
             f"Agent '{agent_name}' got no valid structured reply in {attempts} "
             f"attempts; last error: {last_error}"
+        )
+
+
+class TruncatedOutputError(StructuredOutputRetriesExceededError):
+    """
+    An invalid structured reply exhausted its measured output allowance.
+    """
+
+    def __init__(self, output_token_limit: int):
+        self.output_token_limit = output_token_limit
+        super().__init__(
+            "output-limited",
+            1,
+            f"Invalid reply reached the {output_token_limit}-token output limit; "
+            "reduce the task or increase its output allowance.",
         )
 
 
@@ -171,6 +188,7 @@ class StructuredCompleter:
         output_type: Type[OutputT],
         charge_usage: Optional[Callable[[CompletionUsage], None]] = None,
         exchange_sink: Optional[Callable[[LanguageModelExchange], None]] = None,
+        output_token_limit: int | None = None,
     ) -> OutputT:
         """
         One structured query; returns the validated output object.
@@ -178,7 +196,9 @@ class StructuredCompleter:
         current_prompt = prompt
         last_error = ""
         for attempt in range(1, self.maximum_attempts + 1):
-            completion = self.client.complete_with_usage(current_prompt)
+            completion = self.client.complete_with_output_limit(
+                current_prompt, output_token_limit
+            )
             response = completion.text
             parsed, error, recovery = self._parse(response, output_type)
             exchange = LanguageModelExchange(
@@ -192,6 +212,8 @@ class StructuredCompleter:
                 input_tokens=completion.usage.input_tokens,
                 output_tokens=completion.usage.output_tokens,
                 usage_source=completion.usage.source,
+                output_token_limit=completion.output_token_limit,
+                output_limit_reached=completion.output_limit_reached,
             )
             self.transcript.record(exchange)
             if exchange_sink is not None:
@@ -202,6 +224,8 @@ class StructuredCompleter:
                 charge_usage(completion.usage)
             if parsed is not None:
                 return parsed
+            if completion.output_limit_reached:
+                raise TruncatedOutputError(completion.output_token_limit)
             last_error = error
             current_prompt = (
                 f"{prompt}\n\n"

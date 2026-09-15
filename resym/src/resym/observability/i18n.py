@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import html
 
-
 ZH_PHRASES = {
     "reSym run viewer": "reSym 运行查看器",
     "Live execution": "实时执行",
@@ -20,7 +19,7 @@ ZH_PHRASES = {
         "执行轨迹 — 实时页面展示的事件流"
     ),
     "Grounded plan": "接地后的计划",
-    "Current action": "当前动作",
+    "Selected action": "选中的动作",
     "Current transformation": "当前转换",
     "Recent events": "最近事件",
     "Library version stores": "符号库版本记录",
@@ -56,9 +55,7 @@ def _variants(text: str) -> tuple[str, ...]:
 
 def to_chinese(page: str) -> str:
     """Translate known viewer chrome while leaving identifiers and data untouched."""
-    for english, chinese in sorted(
-        ZH_PHRASES.items(), key=lambda item: -len(item[0])
-    ):
+    for english, chinese in sorted(ZH_PHRASES.items(), key=lambda item: -len(item[0])):
         for variant in _variants(english):
             page = page.replace(variant, chinese)
     for english, chinese in ZH_TERMS.items():

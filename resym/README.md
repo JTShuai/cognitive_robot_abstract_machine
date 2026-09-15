@@ -152,15 +152,23 @@ With Docker, use the mounted-workspace wrapper instead:
 This scans Coraplex and CRAM/kRrood interfaces and writes drafting jobs to
 `resym/tmp/initialization/`. Nothing is approved automatically.
 
-Grounding starts with a relation-proposal job when no requests are available.
-The model uses the scanned query vocabulary and selected Coraplex action source
+Grounding proposes relations in separate batches, one per Coraplex action.
+The model uses the scanned query vocabulary and the action's source and dependencies
 to propose reusable relations, their meanings, typed roles and bounded parameters.
 Each proposal cites scanned query interfaces. The program checks references and
-types; human review decides admission.
+types; human review decides admission. A reference copied with its rendered
+signature is reduced to the qualified name; a role type whose class name the
+platform defines exactly once is corrected to that class's module, and a readable
+member cited on a subclass or under a wrong module is saved under the class that
+declares it. Every role
+type must be one a task object can denote (a body or a semantic annotation) and
+be accepted by a parameter of a cited query or own a cited readable attribute, so
+a type mismatch is rejected before a Factory job is prepared. Native selector parameters such as
+`Arms` are mapped to the world entity types they select and listed in the prompt.
 
-**TODO**: split large relation proposals into shorter, resumable model sessions.
-
-Imported proposals populate `grounding_requests.json` and add Factory jobs.
+Each completed batch is saved to `grounding_requests.json`. Existing definitions
+are supplied to later batches for reuse. Each new relation gets its own Factory job.
+Running `prepare` again preserves completed batches and prepares unfinished ones.
 
 Run drafting with the configured API model:
 
@@ -172,9 +180,27 @@ uv run --env-file resym/.env --no-sync resym-init draft \
 In Docker, run the same command through `run_in_docker.sh` with
 `--with-llm-credentials`, using `--workspace tmp --config config/llm.json`.
 One `draft` invocation proposes relations and drafts their Factories.
+Rerunning it skips saved replies. An invalid reply that reaches the output-token
+limit gets one retry with twice that allowance, within the configured attempt
+count. If it still fails, the job remains available for a later run. Token usage
+and output limits are recorded in `tmp/initialization/llm_transcript.jsonl`.
 
 Import checks source consistency and candidate structure; it never executes
 Factory source.
+
+Factory drafts use the cited query source and declared input signatures. Missing
+query support is saved as `unsupported_reason`, without submitting executable code
+or repeatedly retrying the same refusal. Static checks do not establish semantic
+correctness: human review must still check that the query proves the stated relation.
+The catalog also scans public typed fields and properties of the world-model
+packages (`world_description`, `robots`, `semantic_annotations`, `spatial_types`).
+Draft prompts show the members of the supplied types, their ancestors, and every
+type reachable through the declared types of those members; access is read-only and checked
+against the receiver type. Generated factories receive native CRAM entities resolved from
+reSym object references (`native_arguments`). Factories approved before this flag,
+such as the hand-written drawer factories, keep receiving object references.
+The report separates `unsupported` from `failed`, and includes `review_notes` for
+possible reuse and unused roles. These notes also appear in candidate review evidence.
 
 ### Review and approve
 

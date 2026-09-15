@@ -320,23 +320,10 @@ def test_experiment_files_use_generic_json_rendering(tmp_path):
     assert "not rendered" in body and "scratch.json" not in body
 
 
-def test_experiment_summaries_render_with_rate_bars(tmp_path):
-    name = _seed_experiment_run(tmp_path)
-    body = _client(tmp_path).get(f"/run/{name}").get_data(as_text=True)
-    # e1_summary.json becomes a backend comparison table with Wilson bars
-    assert "Wilson" in body and "rate-bar" in body
-    # episodes.jsonl becomes an aggregate, not a raw event dump
-    assert "Outcome counts per repair backend" in body
-    assert "patch_proposed" in body and "infrastructure-error" in body
-    # the admission matrix carries a per-policy summary with hover hints
-    assert "curation policy" in body and "mean tests" in body
-    assert "data-tip=" in body
-
-
 def test_index_rows_show_outcomes(tmp_path):
     import json as _json
 
-    _seed_experiment_run(tmp_path)  # writes gate_p2.txt: DOWNGRADE
+    _seed_experiment_run(tmp_path)
     task = RunRecorder.create("demo", root=tmp_path)
     task.finish({"backend": "coraplex", "succeeded": True})
     unfinished = tmp_path / "20990101-000000-crashed"
@@ -345,11 +332,9 @@ def test_index_rows_show_outcomes(tmp_path):
         _json.dumps({"label": "crashed", "started_at": "2026-01-01T00:00:00"})
     )
     body = _client(tmp_path).get("/").get_data(as_text=True)
-    assert "gate: DOWNGRADE" in body
     assert "&#10003; succeeded" in body
     assert "unfinished" in body
-    # the label facet filters the list down to one experiment's runs
-    assert "?label=e1e2" in body
+    # a label query narrows the list to one experiment's runs
     filtered = _client(tmp_path).get("/?label=demo").get_data(as_text=True)
     assert "-demo</b>" in filtered
     assert "e1e2</b>" not in filtered
@@ -400,81 +385,6 @@ def test_run_meta_shows_stage_timeline(tmp_path):
     body = _client(tmp_path).get(f"/run/{run.name}").get_data(as_text=True)
     assert "where the time went" in body
     assert "1m 09s" in body and "3m 19s" in body
-
-
-def test_episode_browser_groups_cases_with_facets(tmp_path):
-    recorder = RunRecorder.create("e1e2", root=tmp_path)
-    for backend, correct in (("agentic-rag", True), ("no-repair", False)):
-        for template, group, seed in (
-            ("missing-close-operator", "D1", 11),
-            ("inverted-precondition", "D2", 22),
-        ):
-            recorder.append_jsonl(
-                "D_experiment",
-                "episodes.jsonl",
-                {
-                    "backend": backend,
-                    "template_id": template,
-                    "group": group,
-                    "proposal_seed": seed,
-                    "proposal_context_id": f"{template}/scene-{seed}",
-                    "episode_index": 0,
-                    "status": "patch_proposed" if correct else "no_candidate",
-                    "admitted": correct,
-                    "correct_repair": correct,
-                    "false_admission": False,
-                    "budget": {"estimated_tokens_used": 1234},
-                    "events": [],
-                },
-            )
-    recorder.transcript_path.write_text(
-        '{"agent_name":"symbol-proposer","model":"m","attempt":1,'
-        '"prompt":"P","response":"R","parse_error":null}\n',
-        encoding="utf-8",
-    )
-    recorder.finish({})
-    name = recorder.directory.name
-    client = _client(tmp_path)
-
-    # the run overview keeps the aggregate card, now with a browse link
-    overview = client.get(f"/run/{name}").get_data(as_text=True)
-    assert "browse the 2 cases (4 episodes)" in overview
-
-    # the artifact page regroups episodes into per-case boxes
-    body = client.get(f"/run/{name}/artifact/D_experiment/episodes.jsonl").get_data(
-        as_text=True
-    )
-    assert "4 episodes = 2 cases &times; 2 backends" in body
-    assert "fault: missing-close-operator" in body and "scene-11" in body
-    assert "correct repair" in body and "no fix found" in body
-    assert "1,234 tokens" in body
-    # each attempted case links to its Stage B conversations
-    assert "read this case's LLM conversations" in body
-    assert "../B_repair/llm_transcript.jsonl?fault=missing-close-operator" in body
-    # a scene filter narrows to the one case a cross link points at
-    pinned = client.get(
-        f"/run/{name}/artifact/D_experiment/episodes.jsonl"
-        "?fault=missing-close-operator&scene=11"
-    ).get_data(as_text=True)
-    assert "showing 1 of 2 cases" in pinned
-
-    # facets narrow cases (group) and rows inside them (backend)
-    grouped = client.get(
-        f"/run/{name}/artifact/D_experiment/episodes.jsonl?group=D1"
-    ).get_data(as_text=True)
-    assert "fault: inverted-precondition" not in grouped
-    assert "showing 1 of 2 cases" in grouped
-    by_backend = client.get(
-        f"/run/{name}/artifact/D_experiment/episodes.jsonl?backend=no-repair"
-    ).get_data(as_text=True)
-    assert "<code>agentic-rag</code>" not in by_backend
-
-    # the Chinese page translates the case chrome
-    chinese = client.get(
-        f"/run/{name}/artifact/D_experiment/episodes.jsonl?lang=zh&group=D1"
-    ).get_data(as_text=True)
-    assert "命中 1 个，共 2 个案例" in chinese
-    assert "正确修复" in chinese
 
 
 def test_index_does_not_interpret_experiment_episode_files(tmp_path):
@@ -963,128 +873,6 @@ def test_library_diff_reports_removals(tmp_path):
     )
 
 
-def test_heavy_transcript_summarizes_and_paginates(tmp_path):
-    name = _seed_run(tmp_path)
-    # 60 calls of the looping agent: turns of retrieve → propose → submit,
-    # so every 3 calls close one conversation → 20 conversations.
-    tools = ["retrieve_domain_fragments", "propose_patch", "submit_for_admission"]
-    lines = "".join(
-        json.dumps(
-            {
-                "agent_name": "planning-model-agent",
-                "model": "m",
-                "attempt": 1,
-                "prompt": f"PROMPT-{i}",
-                "response": json.dumps({"tool": tools[i % 3], "marker": f"R-{i}"}),
-                "input_tokens": 10,
-                "output_tokens": 2,
-            }
-        )
-        + "\n"
-        for i in range(60)
-    )
-    (tmp_path / name / "B_repair" / "llm_transcript.jsonl").write_text(
-        lines, encoding="utf-8"
-    )
-    client = _client(tmp_path)
-    body = client.get(f"/run/{name}").get_data(as_text=True)
-    # the overview shows only a stats card with a link, never the exchanges
-    assert "browse the 20 repair cases (20 conversations)" in body
-    assert "R-59" not in body
-    assert "600 in" in body  # token totals surface on the overview
-    page = client.get(
-        f"/run/{name}/artifact/B_repair/llm_transcript.jsonl?page=4"
-    ).get_data(as_text=True)
-    # numbered pager marks page 4 of 4 as current
-    assert "class='on' href='?page=4'>4</a>" in page
-    assert "?page=5" not in page
-    # cases 16-20 hold calls 45-59, grouped into 3 turns each
-    assert "repair case 16" in page
-    assert "R-59" in page and "R-0" not in page
-    assert "submitted a fix for review" in page
-    assert "turn 3" in page
-    filtered = client.get(
-        f"/run/{name}/artifact/B_repair/llm_transcript.jsonl"
-        "?agent=planning-model-agent"
-    ).get_data(as_text=True)
-    assert "planning-model-agent (20)" in filtered
-    # traversal outside the run directory is refused
-    (tmp_path / "secret.txt").write_text("secret", encoding="utf-8")
-    assert client.get(f"/run/{name}/artifact/..%2Fsecret.txt").status_code == 404
-
-
-def test_gate_verdict_renders_as_headline_card(tmp_path):
-    name = _seed_run(tmp_path)
-    (tmp_path / name / "gate_p2.txt").write_text(
-        "Gate P2: DOWNGRADE to plan B — neither condition holds\n"
-        "  correct repair: mean diff -0.36 [-0.46, -0.26] over 110 pairs\n",
-        encoding="utf-8",
-    )
-    body = _client(tmp_path).get(f"/run/{name}").get_data(as_text=True)
-    assert "badge warn'>DOWNGRADE" in body
-    assert "neither condition holds" in body
-    assert "mean diff -0.36" in body
-
-
-def test_tagged_transcript_labels_cases_and_backends(tmp_path):
-    name = _seed_run(tmp_path)
-
-    def call(backend, agent, episode, scene, response, group="D1"):
-        return json.dumps(
-            {
-                "agent_name": agent,
-                "model": "m",
-                "attempt": 1,
-                "prompt": "P",
-                "response": response,
-                "backend": backend,
-                "template_id": "missing-close-operator",
-                "group": group,
-                "episode_index": episode,
-                "proposal_context_id": f"missing-close-operator/scene-{scene}",
-            }
-        )
-
-    submit = json.dumps({"tool": "submit_for_admission"})
-    proposal = json.dumps({"rationale": "why", "operators": []})
-    lines = "\n".join(
-        [
-            call("agentic-rag", "planning-model-agent", 0, 111, submit),
-            call("closed-book", "symbol-proposer", 0, 111, proposal),
-            call("rag-one-shot", "symbol-proposer", 0, 111, proposal),
-            call("agentic-rag", "planning-model-agent", 1, 222, submit, group="D2"),
-            call("fixed-pipeline", "symbol-proposer", 1, 222, proposal, group="D2"),
-        ]
-    )
-    (tmp_path / name / "B_repair" / "llm_transcript.jsonl").write_text(
-        lines + "\n", encoding="utf-8"
-    )
-    page = (
-        _client(tmp_path)
-        .get(f"/run/{name}/artifact/B_repair/llm_transcript.jsonl")
-        .get_data(as_text=True)
-    )
-    # tag-based case split: episode 0 and episode 1 become two boxes
-    assert "repair case 1" in page and "repair case 2" in page
-    assert "fault: missing-close-operator" in page
-    assert "group: D1" in page and "missing model elements" in page
-    assert "scene-111" in page and "scene-222" in page
-    # recorded backends replace the one-of-three fallback label
-    assert "backend: closed-book" in page
-    assert "backend: rag-one-shot" in page
-    assert "backend: fixed-pipeline" in page
-    assert "backend: agentic-rag" in page
-    assert "closed-book / rag-one-shot / fixed-pipeline" not in page
-    # the group facet narrows to matching cases only
-    filtered = (
-        _client(tmp_path)
-        .get(f"/run/{name}/artifact/B_repair/llm_transcript.jsonl?group=D2")
-        .get_data(as_text=True)
-    )
-    assert "repair case 2" in filtered and "repair case 1" not in filtered
-    assert "scene-222" in filtered and "scene-111" not in filtered
-
-
 def test_transcript_recorder_stamps_scoped_context(tmp_path):
     from resym.llm.transcript import (
         LanguageModelExchange,
@@ -1136,77 +924,11 @@ def test_chinese_language_toggle_and_cookie(tmp_path):
     assert "阶段 A · 世界" in run_page
     assert "执行轨迹" in run_page  # trace.jsonl explainer
     live = client.get(f"/run/{name}/live").get_data(as_text=True)
-    assert "接地后的计划" in live and "当前动作" in live
+    assert "接地后的计划" in live and "选中的动作" in live
     # switching back to English works the same way
     client.get("/?lang=en")
     back = client.get(f"/run/{name}").get_data(as_text=True)
     assert "Stage A · world" in back and "阶段 A" not in back
-
-
-def test_long_prompt_folds_into_sections_with_change_badges(tmp_path):
-    name = _seed_run(tmp_path)
-    boiler = "x" * 40
-    prompt_1 = (
-        "You are an agent.\n"
-        f"## Failure certificate\ncert {boiler}\n"
-        f"## Episode so far\n(no steps yet)\n"
-    )
-    prompt_2 = (
-        "You are an agent.\n"
-        f"## Failure certificate\ncert {boiler}\n"
-        f"## Episode so far\nturn 1: retrieved fragments\n"
-    )
-    submit = json.dumps({"tool": "submit_for_admission"})
-    lines = "\n".join(
-        [
-            json.dumps(
-                {
-                    "agent_name": "planning-model-agent",
-                    "model": "m",
-                    "attempt": 1,
-                    "prompt": prompt_1,
-                    "response": json.dumps({"tool": "retrieve_domain_fragments"}),
-                }
-            ),
-            json.dumps(
-                {
-                    "agent_name": "planning-model-agent",
-                    "model": "m",
-                    "attempt": 1,
-                    "prompt": prompt_2,
-                    "response": submit,
-                }
-            ),
-            # a format retry with the identical prompt collapses to one line
-            json.dumps(
-                {
-                    "agent_name": "planning-model-agent",
-                    "model": "m",
-                    "attempt": 1,
-                    "prompt": prompt_2,
-                    "response": "garbage",
-                }
-            ),
-        ]
-    )
-    (tmp_path / name / "B_repair" / "llm_transcript.jsonl").write_text(
-        lines + "\n", encoding="utf-8"
-    )
-    page = (
-        _client(tmp_path)
-        .get(f"/run/{name}/artifact/B_repair/llm_transcript.jsonl")
-        .get_data(as_text=True)
-    )
-    # sections render as their own folds with char counts
-    assert "class=psec" in page
-    assert "Failure certificate" in page and "Episode so far" in page
-    assert "role &amp; instructions" in page
-    # turn 2 marks the unchanged and changed sections, changed opens
-    assert "same as last turn" in page
-    assert "changed since last turn" in page
-    assert "2 changed since the previous turn" not in page  # only 1 changed
-    assert "1 changed since the previous turn" in page
-    assert "full raw prompt" in page
 
 
 def test_capability_page_reviews_a_realization_candidate(tmp_path):

@@ -19,6 +19,8 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
+from typing_extensions import Any, get_args
+
 from krrood.adapters.json_serializer import from_json, to_json
 
 from resym.core.capability_model import CapabilityContract
@@ -35,9 +37,28 @@ from resym.platform.feasibility import (
     FEASIBILITY_FACTORY_NAMESPACE,
     capability_feasibility_factories,
 )
+from resym.platform.grounding_types import (
+    GroundingTypeChecker,
+    GroundingTypeError,
+    readable_member_type,
+)
+from resym.core.symbol_types import (
+    SymbolType,
+    matching_symbol_types,
+    resolve_symbol_type,
+)
 
 LOCAL_FACTORY_PACKAGE = "resym_local_grounding_factories"
 
+READABLE_ATTRIBUTE_PACKAGES = (
+    "semantic_digital_twin.world_description",
+    "semantic_digital_twin.robots",
+    "semantic_digital_twin.semantic_annotations",
+    "semantic_digital_twin.spatial_types",
+)
+"""
+World-model packages whose public fields and properties factories may read.
+"""
 
 # %% Source discovery
 
@@ -51,6 +72,7 @@ class GroundingVocabularyKind(StrEnum):
     SYMBOLIC_FUNCTION = "symbolic-function"
     PREDICATE = "predicate"
     QUERY_HELPER = "query-helper"
+    READABLE_ATTRIBUTE = "readable-attribute"
 
 
 @dataclass(frozen=True)
@@ -87,6 +109,11 @@ class GroundingVocabularyEntry:
     documentation: str = ""
     """
     Source docstring shown during semantic review and Agent drafting.
+    """
+
+    owner_type_ref: str | None = None
+    """
+    Declaring native class for readable fields and properties.
     """
 
     def __post_init__(self) -> None:
@@ -126,7 +153,9 @@ class GroundingVocabulary:
         Whether one explicit import belongs to this vocabulary.
         """
         return any(
-            entry.module_name == module_name and entry.symbol_name == symbol_name
+            entry.owner_type_ref is None
+            and entry.module_name == module_name
+            and entry.symbol_name == symbol_name
             for entry in self.entries
         )
 
@@ -142,7 +171,119 @@ class GroundingVocabulary:
                 else ""
             )
             for entry in self.entries
+            if entry.owner_type_ref is None
         )
+
+    def render_attributes(self, type_references: Iterable[str]) -> str:
+        """
+        List readable members of the supplied types, their ancestors, and every type
+        reachable through the declared types of those members.
+        """
+        owners: dict[str, type] = {}
+        frontier = [
+            resolve_symbol_type(SymbolType(reference))
+            for reference in set(type_references)
+        ]
+        while frontier:
+            reached: list[type] = []
+            for native_type in frontier:
+                for ancestor in native_type.__mro__:
+                    reference = f"{ancestor.__module__}.{ancestor.__qualname__}"
+                    if reference in owners:
+                        continue
+                    owners[reference] = ancestor
+                    for entry in self.entries:
+                        if entry.owner_type_ref == reference:
+                            member = readable_member_type(ancestor, entry.symbol_name)
+                            reached.extend(_named_types(member))
+            frontier = reached
+        return "\n".join(
+            f"- {entry.qualified_name}{entry.signature} (read only)"
+            for entry in self.entries
+            if entry.owner_type_ref in owners
+        )
+
+    def canonical_reference(self, reference: str) -> str | None:
+        """
+        The vocabulary name a citation denotes: the name itself, or the declaring
+        class's entry for a member cited on a subclass or under a wrong module.
+
+        Absent when the vocabulary has no such symbol.
+        """
+        if any(entry.qualified_name == reference for entry in self.entries):
+            return reference
+        owner_reference, _, member = reference.rpartition(".")
+        candidates = [
+            entry
+            for entry in self.entries
+            if entry.owner_type_ref is not None and entry.symbol_name == member
+        ]
+        if not candidates:
+            return None
+        matches = matching_symbol_types(owner_reference)
+        owner = owner_reference if owner_reference in matches else None
+        if owner is None and len(matches) == 1:
+            (owner,) = matches
+        if owner is None:
+            return None
+        ancestors = [
+            f"{ancestor.__module__}.{ancestor.__qualname__}"
+            for ancestor in resolve_symbol_type(SymbolType(owner)).__mro__
+        ]
+        declaring = sorted(
+            (entry for entry in candidates if entry.owner_type_ref in ancestors),
+            key=lambda entry: ancestors.index(entry.owner_type_ref),
+        )
+        return declaring[0].qualified_name if declaring else None
+
+    def member_owners(self, reference: str) -> tuple[str, ...]:
+        """
+        Qualified names of the readable members with the cited member's name that loaded
+        subclasses of the cited class declare, or every class when the cited class does
+        not resolve.
+        """
+        owner_reference, _, member = reference.rpartition(".")
+        descendants: set[str] | None = None
+        if owner_reference in matching_symbol_types(owner_reference):
+            pending = [resolve_symbol_type(SymbolType(owner_reference))]
+            descendants = set()
+            while pending:
+                native_type = pending.pop()
+                descendants.add(f"{native_type.__module__}.{native_type.__qualname__}")
+                pending.extend(native_type.__subclasses__())
+        return tuple(
+            entry.qualified_name
+            for entry in self.entries
+            if entry.owner_type_ref is not None
+            and entry.symbol_name == member
+            and (descendants is None or entry.owner_type_ref in descendants)
+        )
+
+    def render_details(self, references: Iterable[str]) -> str:
+        """
+        Show source-backed semantics and implementations of selected queries.
+        """
+        selected = set(references)
+        details = []
+        for entry in self.entries:
+            if entry.qualified_name not in selected:
+                continue
+            details.append(
+                f"{entry.qualified_name}{entry.signature}\n{entry.documentation}"
+            )
+            path = Path(entry.source_file)
+            if not path.is_file():
+                continue
+            source = path.read_text()
+            if _text_checksum(source) != entry.source_checksum:
+                continue
+            for node in ast.parse(source).body:
+                if (
+                    isinstance(node, (ast.FunctionDef, ast.ClassDef))
+                    and node.name == entry.symbol_name
+                ):
+                    details.append(ast.get_source_segment(source, node))
+        return "\n\n".join(details)
 
 
 @dataclass(frozen=True)
@@ -208,6 +349,42 @@ def discover_grounding_vocabulary(
             tree = ast.parse(source, filename=str(source_file))
             checksum = _text_checksum(source)
             for node in tree.body:
+                if isinstance(node, ast.ClassDef) and module_name.startswith(
+                    READABLE_ATTRIBUTE_PACKAGES
+                ):
+                    for member in node.body:
+                        annotation = None
+                        if isinstance(member, ast.AnnAssign) and isinstance(
+                            member.target, ast.Name
+                        ):
+                            member_name = member.target.id
+                            annotation = member.annotation
+                        elif isinstance(member, ast.FunctionDef) and any(
+                            isinstance(decorator, ast.Name)
+                            and decorator.id == "property"
+                            for decorator in member.decorator_list
+                        ):
+                            member_name = member.name
+                            annotation = member.returns
+                        else:
+                            continue
+                        if annotation is None or member_name.startswith("_"):
+                            continue
+                        owner = f"{module_name}.{node.name}"
+                        entry = GroundingVocabularyEntry(
+                            qualified_name=f"{owner}.{member_name}",
+                            kind=GroundingVocabularyKind.READABLE_ATTRIBUTE,
+                            signature=f" -> {ast.unparse(annotation)}",
+                            source_file=str(source_file),
+                            source_checksum=checksum,
+                            documentation=(
+                                ast.get_docstring(member) or ""
+                                if isinstance(member, ast.FunctionDef)
+                                else "Public typed field; read access only."
+                            ),
+                            owner_type_ref=owner,
+                        )
+                        entries[entry.qualified_name] = entry
                 kind = _vocabulary_kind(module_name, node)
                 if kind is None:
                     continue
@@ -333,7 +510,8 @@ class GroundingFactorySourceValidator:
             return source_objections
         try:
             _validate_candidate_interface(candidate)
-        except GroundingFactorySourceError as error:
+            GroundingTypeChecker(self.vocabulary).validate(candidate)
+        except (GroundingFactorySourceError, GroundingTypeError) as error:
             return (str(error),)
         return ()
 
@@ -421,14 +599,39 @@ class GroundingFactorySourceValidator:
             if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
                 raise GroundingFactorySourceError("dunder access is not allowed")
         returns = [node for node in ast.walk(function) if isinstance(node, ast.Return)]
+        boolean_queries = {
+            entry.qualified_name
+            for entry in self.vocabulary.entries
+            if entry.kind is not GroundingVocabularyKind.PREDICATE
+            and "->" in entry.signature
+            and entry.signature.rsplit("->", 1)[-1].strip(" '\"") == "bool"
+        }
+        boolean_calls = {"bool", "all", "any"} | {
+            alias.asname or alias.name
+            for node in tree.body
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+            if f"{node.module}.{alias.name}" in boolean_queries
+        }
         if not returns or any(
-            not _is_boolean_expression(node.value) for node in returns
+            not _is_boolean_expression(node.value, boolean_calls) for node in returns
         ):
             raise GroundingFactorySourceError(
-                "every factory return must be statically Boolean"
+                "every factory return must be statically Boolean: return a Boolean "
+                "literal, comparison, Python `not` expression, bool/all/any call, "
+                "or a scanned function annotated -> bool. Constructing a Predicate "
+                "class does not evaluate it; bool(query_object) is not a substitute."
             )
 
     def _validate_calls(self, tree: ast.Module) -> None:
+        entries = {entry.qualified_name: entry for entry in self.vocabulary.entries}
+        query_imports = {
+            alias.asname or alias.name: entries[f"{node.module}.{alias.name}"]
+            for node in tree.body
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+            if f"{node.module}.{alias.name}" in entries
+        }
         imported_names = {
             alias.asname or alias.name
             for node in tree.body
@@ -451,6 +654,11 @@ class GroundingFactorySourceValidator:
         }
         for node in ast.walk(tree):
             if isinstance(node, ast.Attribute) and id(node) not in called_attributes:
+                if isinstance(node.ctx, ast.Load) and any(
+                    entry.owner_type_ref is not None and entry.symbol_name == node.attr
+                    for entry in self.vocabulary.entries
+                ):
+                    continue
                 raise GroundingFactorySourceError(
                     f"attribute read '{node.attr}' is outside the reviewed EQL boundary"
                 )
@@ -462,14 +670,72 @@ class GroundingFactorySourceValidator:
                     raise GroundingFactorySourceError(
                         f"call to '{node.func.id}' is outside the reviewed EQL boundary"
                     )
+                if node.func.id in query_imports:
+                    self._validate_query_arguments(node, query_imports[node.func.id])
                 continue
             if isinstance(node.func, ast.Attribute):
+                if (
+                    node.func.attr == "get"
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "parameters"
+                ):
+                    continue
                 if node.func.attr not in allowed_methods:
                     raise GroundingFactorySourceError(
-                        f"method '{node.func.attr}' is outside the reviewed EQL boundary"
+                        f"method '{node.func.attr}' is outside the reviewed EQL "
+                        "boundary; methods are never callable. If no readable "
+                        "attribute or reviewed query yields the value, answer with "
+                        "unsupported_reason"
                     )
                 continue
             raise GroundingFactorySourceError("dynamic calls are not allowed")
+
+    def _validate_query_arguments(
+        self, call: ast.Call, entry: GroundingVocabularyEntry
+    ) -> None:
+        """
+        Check explicit call arguments against a scanned function signature.
+        """
+        if (
+            entry.kind is GroundingVocabularyKind.PREDICATE
+            or not entry.signature.startswith("(")
+        ):
+            return
+        if any(isinstance(argument, ast.Starred) for argument in call.args) or any(
+            keyword.arg is None for keyword in call.keywords
+        ):
+            return
+        try:
+            function = ast.parse(f"def query{entry.signature}:\n    pass").body[0]
+        except SyntaxError:
+            return
+        positional = function.args.posonlyargs + function.args.args
+        required = {
+            argument.arg
+            for argument in positional[: len(positional) - len(function.args.defaults)]
+        }
+        required.update(
+            argument.arg
+            for argument, default in zip(
+                function.args.kwonlyargs, function.args.kw_defaults
+            )
+            if default is None
+        )
+        supplied = {argument.arg for argument in positional[: len(call.args)]}
+        keywords = {keyword.arg for keyword in call.keywords}
+        allowed = {
+            argument.arg for argument in function.args.args + function.args.kwonlyargs
+        }
+        invalid = (
+            (len(call.args) > len(positional) and function.args.vararg is None)
+            or bool(supplied & keywords)
+            or bool(required - supplied - keywords)
+            or (bool(keywords - allowed) and function.args.kwarg is None)
+        )
+        if invalid:
+            raise GroundingFactorySourceError(
+                f"Call arguments do not match {entry.qualified_name}{entry.signature}"
+            )
 
 
 # %% Local review workspace
@@ -485,6 +751,84 @@ class GroundingFactoryWorkspace:
     """
     Directory containing the review queue, catalog, and approved package.
     """
+
+    def review_notes(self, candidate: GroundingFactoryCandidate) -> tuple[str, ...]:
+        """
+        Flag unused roles and candidates sharing the same query interfaces.
+        """
+        tree = ast.parse(candidate.source_code)
+        imports = {
+            (node.module, alias.name)
+            for node in tree.body
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+        }
+        notes = []
+        for other in self.candidates():
+            if other.candidate_id == candidate.candidate_id:
+                continue
+            other_imports = {
+                (node.module, alias.name)
+                for node in ast.parse(other.source_code).body
+                if isinstance(node, ast.ImportFrom)
+                for alias in node.names
+            }
+            if (
+                imports
+                and imports == other_imports
+                and candidate.roles == other.roles
+                and candidate.parameters == other.parameters
+            ):
+                notes.append(
+                    f"Possible reuse: {other.proposed_uid} uses the same interfaces, "
+                    "roles and parameters; compare meanings before approving "
+                    "another identity."
+                )
+        names = {}
+        used = set()
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Assign)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "arguments"
+            ):
+                for target in node.targets:
+                    if isinstance(target, (ast.Tuple, ast.List)):
+                        names.update(
+                            {
+                                name.id: index
+                                for index, name in enumerate(target.elts)
+                                if isinstance(name, ast.Name)
+                            }
+                        )
+            if (
+                isinstance(node, ast.Subscript)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "arguments"
+                and isinstance(node.slice, ast.Constant)
+                and type(node.slice.value) is int
+            ):
+                used.add(
+                    node.slice.value % len(candidate.roles)
+                    if candidate.roles
+                    else node.slice.value
+                )
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Name)
+                and isinstance(node.ctx, ast.Load)
+                and node.id in names
+            ):
+                used.add(names[node.id])
+        unused = [
+            role.name for index, role in enumerate(candidate.roles) if index not in used
+        ]
+        if unused:
+            notes.append(
+                f"Unused roles: {', '.join(unused)}. Check whether the "
+                "implementation establishes the full stated relation."
+            )
+        return tuple(notes)
 
     @property
     def candidate_directory(self) -> Path:
@@ -729,7 +1073,11 @@ class GroundingFactoryWorkspace:
                 f"factory uid '{candidate.proposed_uid}' lies in the reserved "
                 "capability-feasibility namespace"
             )
-        GroundingFactorySourceValidator(vocabulary).validate(candidate.source_code)
+        objections = GroundingFactorySourceValidator(vocabulary).candidate_objections(
+            candidate
+        )
+        if objections:
+            raise GroundingFactorySourceError("; ".join(objections))
         _validate_candidate_interface(candidate)
         self.approved_package_directory.mkdir(parents=True, exist_ok=True)
         package_file = self.approved_package_directory / "__init__.py"
@@ -753,6 +1101,7 @@ class GroundingFactoryWorkspace:
             implementation_ref=implementation_ref,
             implementation_checksum=_file_checksum(source_file),
             roles=candidate.roles,
+            native_arguments=candidate.native_arguments,
             origin=GroundingFactoryOrigin.LOCAL,
             reviewed_by=reviewer,
             approved_at=datetime.now(UTC).isoformat(),
@@ -1351,7 +1700,18 @@ def _source_signature(
     node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
 ) -> str:
     if isinstance(node, ast.ClassDef):
-        return ""
+        fields = [
+            f"{field.target.id}: {ast.unparse(field.annotation)}"
+            + (f" = {ast.unparse(field.value)}" if field.value is not None else "")
+            for field in node.body
+            if isinstance(field, ast.AnnAssign) and isinstance(field.target, ast.Name)
+        ]
+        return (
+            "("
+            + ", ".join(fields)
+            + ") [Predicate constructor; evaluate the query, not the object's "
+            "truthiness]"
+        )
     positional = list(node.args.posonlyargs) + list(node.args.args)
     default_offset = len(positional) - len(node.args.defaults)
     arguments = []
@@ -1364,6 +1724,8 @@ def _source_signature(
         arguments.append(rendered)
     if node.args.vararg is not None:
         arguments.append(f"*{node.args.vararg.arg}")
+    elif node.args.kwonlyargs:
+        arguments.append("*")
     arguments.extend(
         f"{argument.arg}"
         + (f" = {ast.unparse(default)}" if default is not None else "")
@@ -1380,17 +1742,23 @@ def _tree_depth(node: ast.AST) -> int:
     return 1 if not children else 1 + max(_tree_depth(child) for child in children)
 
 
-def _is_boolean_expression(node: ast.expr | None) -> bool:
+def _is_boolean_expression(
+    node: ast.expr | None, boolean_calls: set[str] | None = None
+) -> bool:
     if isinstance(node, ast.Constant):
         return type(node.value) is bool
-    if isinstance(node, (ast.Compare, ast.BoolOp)):
+    if isinstance(node, ast.Compare):
         return True
+    if isinstance(node, ast.BoolOp):
+        return all(
+            _is_boolean_expression(value, boolean_calls) for value in node.values
+        )
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
         return True
     return (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == "bool"
+        and node.func.id in (boolean_calls or {"bool", "all", "any"})
     )
 
 
@@ -1445,7 +1813,24 @@ def _candidate_dependency_checksums(
         for alias in node.names:
             qualified_name = f"{node.module}.{alias.name}"
             dependencies[qualified_name] = approved[qualified_name].source_checksum
+    attributes = {
+        node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+    }
+    for entry in vocabulary.entries:
+        if entry.owner_type_ref is not None and entry.symbol_name in attributes:
+            dependencies[entry.qualified_name] = entry.source_checksum
     return tuple(sorted(dependencies.items()))
+
+
+def _named_types(hint: Any) -> tuple[type, ...]:
+    """
+    Classes named by a hint, looking through unions and parameterized containers.
+    """
+    if isinstance(hint, type):
+        return (hint,)
+    return tuple(
+        named for argument in get_args(hint) for named in _named_types(argument)
+    )
 
 
 def _source_imports_dependencies(source_code: str) -> bool:
@@ -1484,12 +1869,32 @@ def _import_function(implementation_ref: str) -> GroundingFactoryProcedure:
 
 
 def _qualified_name_source_checksum(qualified_name: str) -> str | None:
-    module_name, _ = qualified_name.rsplit(".", 1)
-    specification = importlib.util.find_spec(module_name)
+    """
+    Checksum of the module file defining a symbol or a class member.
+    """
+    source_file = _qualified_name_source_file(qualified_name)
+    if source_file is None or not source_file.is_file():
+        return None
+    return _file_checksum(source_file)
+
+
+def _qualified_name_source_file(qualified_name: str) -> Path | None:
+    """
+    Locate the longest module prefix of a dotted name, whether the remainder is a
+    function, a class, or a member of a class.
+    """
+    parts = qualified_name.split(".")
+    specification = importlib.util.find_spec(parts[0])
+    for depth in range(2, len(parts)):
+        if specification is None or not specification.submodule_search_locations:
+            break
+        submodule = importlib.util.find_spec(".".join(parts[:depth]))
+        if submodule is None:
+            break
+        specification = submodule
     if specification is None or specification.origin is None:
         return None
-    source_file = Path(specification.origin)
-    return _file_checksum(source_file) if source_file.is_file() else None
+    return Path(specification.origin)
 
 
 def _callable_source_checksum(procedure: Callable) -> str:

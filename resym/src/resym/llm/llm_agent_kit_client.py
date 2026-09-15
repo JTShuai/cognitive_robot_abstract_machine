@@ -16,11 +16,13 @@ so its parameter schema is reused instead of mirrored.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 from typing_extensions import TYPE_CHECKING
 
 from llm_agent_kit import (
     APICallError,
+    CallOptions,
     DefaultRecorder,
     LLMAgent,
     LLMAgentConfig,
@@ -38,6 +40,16 @@ from resym.llm.client import (
 
 if TYPE_CHECKING:
     from resym.llm.configuration import LanguageModelConfiguration
+
+
+class OutputParameter(StrEnum):
+    """
+    Provider configuration keys that bound completion output.
+    """
+
+    MAX_TOKENS = "max_tokens"
+    MAX_COMPLETION_TOKENS = "max_completion_tokens"
+    KWARGS = "kwargs"
 
 
 class _PerCallUsageRecorder(DefaultRecorder):
@@ -98,8 +110,36 @@ class LLMAgentKitCompletionClient(CompletionClient):
         return self.complete_with_usage(prompt).text
 
     def complete_with_usage(self, prompt: str) -> CompletionResult:
+        return self.complete_with_output_limit(prompt, None)
+
+    def complete_with_output_limit(
+        self, prompt: str, output_token_limit: int | None
+    ) -> CompletionResult:
+        """
+        Override the output allowance for one call without changing configuration.
+        """
+        kwargs = self.configuration.agent.get(OutputParameter.KWARGS, {})
+        parameter = (
+            OutputParameter.MAX_COMPLETION_TOKENS
+            if OutputParameter.MAX_COMPLETION_TOKENS in kwargs
+            else OutputParameter.MAX_TOKENS
+        )
+        limit = (
+            output_token_limit
+            if output_token_limit is not None
+            else kwargs.get(parameter)
+        )
+        options = (
+            CallOptions(extra={parameter: limit})
+            if output_token_limit is not None
+            else None
+        )
         try:
-            response = self.agent.call(prompt)
+            response = (
+                self.agent.call(prompt, options=options)
+                if options
+                else self.agent.call(prompt)
+            )
         except MaxRetriesExceededError as error:
             raise TransientInfrastructureError(str(error)) from error
         # APICallError means a non-retryable request/config/program error. It
@@ -111,7 +151,7 @@ class LLMAgentKitCompletionClient(CompletionClient):
             raise RuntimeError("llm-agent-kit returned without token usage")
         if not isinstance(response, str):
             raise TypeError("single-completion client received multiple responses")
-        return CompletionResult(response, usage)
+        return CompletionResult(response, usage, output_token_limit=limit)
 
     @property
     def description(self) -> str:

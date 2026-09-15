@@ -15,6 +15,10 @@ from resym.platform.universe import (
     pddl_name,
 )
 from semantic_digital_twin.robots.robot_parts import AbstractRobot, AbstractRobotPart
+from semantic_digital_twin.world_description.world_entity import (
+    Body,
+    SemanticAnnotation,
+)
 from semantic_digital_twin.semantic_annotations.mixins import (
     HasRootKinematicStructureEntity,
 )
@@ -144,3 +148,22 @@ def task_object_universe(
     Discover CRAM objects and construct the active task universe.
     """
     return CramObjectCatalog.from_world(world, robot).universe(annotation_types)
+
+
+# %% denotable role types
+
+
+def denotable(native_type: type) -> bool:
+    """
+    Whether some task object can denote an instance of the type: a body, or a semantic
+    annotation such as a robot, a robot part or an annotated object.
+    """
+    if issubclass(Body, native_type) or issubclass(native_type, Body):
+        return True
+    pending = [SemanticAnnotation]
+    while pending:
+        annotation_type = pending.pop()
+        if issubclass(annotation_type, native_type):
+            return True
+        pending.extend(annotation_type.__subclasses__())
+    return False

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
+import re
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
@@ -18,7 +20,11 @@ from resym.core.grounding_model import (
     GroundingFactoryReviewStatus,
     text_checksum,
 )
-from resym.core.symbol_types import SymbolType, resolve_symbol_type
+from resym.core.symbol_types import (
+    SymbolType,
+    resolve_symbol_type,
+    matching_symbol_types,
+)
 from resym.interfaces.capability_drafting import (
     CapabilityContractDraftModel,
     capability_contract_candidate,
@@ -26,6 +32,7 @@ from resym.interfaces.capability_drafting import (
 )
 from resym.interfaces.grounding_drafting import (
     GroundingFactoryDraftModel,
+    UnsupportedGroundingError,
     grounding_factory_candidate,
     grounding_factory_prompt,
 )
@@ -42,6 +49,7 @@ from resym.llm.prompting import render_prompt
 from resym.llm.structured import (
     StructuredCompleter,
     StructuredOutputRetriesExceededError,
+    TruncatedOutputError,
 )
 from resym.llm.transcript import TranscriptRecorder
 from resym.platform.capability_contract_review import (
@@ -70,6 +78,8 @@ from resym.platform.grounding_catalog import (
     GroundingFactoryWorkspace,
     initialize_grounding_factories,
 )
+from resym.platform.cram_objects import denotable
+from resym.platform.grounding_types import accepted_role_types, compatible_types
 
 # %% persistent materials
 
@@ -105,6 +115,19 @@ class InvalidInitializationDraft(ValueError):
     """A response cannot enter the review queue under the current platform."""
 
 
+SELECTOR_PARAMETER_TYPES: dict[str, tuple[SymbolType, ...]] = {
+    "Arms": (
+        SymbolType("semantic_digital_twin.robots.robot_parts.Arm"),
+        SymbolType("semantic_digital_twin.robots.robot_parts.EndEffector"),
+    ),
+}
+"""
+World entity types a native action parameter selects among, keyed by the
+parameter's type name, for parameters whose native type is a selector rather than
+a world entity.
+"""
+
+
 @dataclass
 class ImportReport:
     """Per-job results; accepted entries are pending human review."""
@@ -117,6 +140,10 @@ class ImportReport:
     """Jobs without a saved response."""
     failed: dict[str, str] = field(default_factory=dict)
     """Invalid responses and their actionable objections."""
+    unsupported: dict[str, str] = field(default_factory=dict)
+    """Saved declarations of missing query or observation support."""
+    review_notes: dict[str, list[str]] = field(default_factory=dict)
+    """Potential duplicates and incomplete role usage requiring human review."""
     proposed: list[str] = field(default_factory=list)
     """Relation identities saved for factory drafting, without approval."""
     prepared: list[str] = field(default_factory=list)
@@ -239,10 +266,12 @@ class Initialization:
         if kind in (None, InitializationKind.REALIZATION):
             jobs.extend(self._realization_jobs(selected, contracts))
         if kind in (None, InitializationKind.GROUNDING, InitializationKind.RELATIONS):
-            if automatic_relations and not requests:
-                job = self._relation_job(selected, grounding)
-                if job.job_id not in self._relation_records():
-                    jobs.append(job)
+            if automatic_relations:
+                records = self._relation_records()
+                for action in selected:
+                    job = self._relation_job((action,), grounding)
+                    if job.job_id not in records:
+                        jobs.append(job)
             if kind is not InitializationKind.RELATIONS:
                 jobs.extend(self._grounding_jobs(requests, grounding))
         _write_json(
@@ -304,17 +333,44 @@ class Initialization:
     ) -> DraftJob:
         """Ask for grounded relation meanings before requesting factory source."""
         action_ids = tuple(item.source_id for item in actions)
-        sources = dict.fromkeys(item.source_file for item in actions)
+        type_names = {
+            name
+            for action in actions
+            for parameter in action.parameters
+            for name in re.findall(r"\b[A-Z][A-Za-z0-9_]*\b", parameter.type_expression)
+        }
+        selectors = {
+            name: SELECTOR_PARAMETER_TYPES[name]
+            for name in type_names
+            if name in SELECTOR_PARAMETER_TYPES
+        }
+        owner_references = {
+            entry.owner_type_ref
+            for entry in grounding.reviewed_vocabulary.entries
+            if entry.owner_type_ref
+            and entry.owner_type_ref.rsplit(".", 1)[-1] in type_names
+        } | {
+            selected.python_type_ref
+            for options in selectors.values()
+            for selected in options
+        }
         prompt = render_prompt(
             "propose_grounding_relations",
-            vocabulary=grounding.reviewed_vocabulary.render(),
+            vocabulary=grounding.reviewed_vocabulary.render()
+            + "\nReadable action-parameter attributes:\n"
+            + grounding.reviewed_vocabulary.render_attributes(owner_references),
+            selectors="\n".join(
+                f"- {name} selects one of: "
+                + ", ".join(selected.python_type_ref for selected in options)
+                for name, options in sorted(selectors.items())
+            )
+            or "- none",
             actions="\n\n".join(item.render() for item in actions)
             + "\n\n"
-            + "\n\n".join(
-                f"{source}:\n{(installed_coraplex_root() / source).read_text()}"
-                for source in sources
+            + "\n\n".join(self._action_source(action) for action in actions),
+            factories=(
+                "Existing relation definitions are supplied separately when drafting."
             ),
-            factories="\n".join(item.uid for item in grounding.catalog) or "none",
         )
         return _job(
             InitializationKind.RELATIONS,
@@ -322,6 +378,48 @@ class Initialization:
             self._relation_checksum(action_ids, grounding),
             relation_action_ids=action_ids,
         )
+
+    def _action_source(self, action: CoraplexCapabilityContractDraft) -> str:
+        """
+        Read one action and its module-local dependencies, leaving out unrelated
+        classes.
+        """
+        source = (installed_coraplex_root() / action.source_file).read_text()
+        nodes = ast.parse(source).body
+        definitions = {
+            node.name: node
+            for node in nodes
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        for node in nodes:
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = (
+                    node.targets if isinstance(node, ast.Assign) else [node.target]
+                )
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        definitions[target.id] = node
+        selected = {definitions[action.action_class.rsplit(".", 1)[-1]]}
+        pending = list(selected)
+        while pending:
+            for reference in ast.walk(pending.pop()):
+                if isinstance(reference, ast.Name) and reference.id in definitions:
+                    dependency = definitions[reference.id]
+                    if dependency not in selected:
+                        selected.add(dependency)
+                        pending.append(dependency)
+        lines = source.splitlines()
+        fragments = []
+        for node in nodes:
+            if node not in selected and not isinstance(
+                node, (ast.Import, ast.ImportFrom)
+            ):
+                continue
+            start = node.lineno
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                start = min([start] + [item.lineno for item in node.decorator_list])
+            fragments.append("\n".join(lines[start - 1 : node.end_lineno]))
+        return "\n\n".join(fragments)
 
     def _validate_relations(
         self, job: DraftJob, response: GroundingRelationsDraft
@@ -335,9 +433,6 @@ class Initialization:
             raise InvalidInitializationDraft(
                 "Platform query or action sources changed; run prepare again."
             )
-        vocabulary = {
-            item.qualified_name for item in grounding.reviewed_vocabulary.entries
-        }
         path = self.materials / InitializationFile.REQUESTS
         existing = {
             item.proposed_uid: item
@@ -353,11 +448,26 @@ class Initialization:
                     f"Duplicate relation identity: {needed.proposed_uid}"
                 )
             seen.add(needed.proposed_uid)
-            unknown = set(proposal.query_references) - vocabulary
+            canonical = {
+                reference: grounding.reviewed_vocabulary.canonical_reference(reference)
+                for reference in proposal.query_references
+            }
+            unknown = sorted(
+                reference for reference, name in canonical.items() if name is None
+            )
             if unknown:
-                raise InvalidInitializationDraft(
-                    f"Unscanned query references: {sorted(unknown)}"
+                hints = "; ".join(
+                    f"'{reference.rsplit('.', 1)[-1]}' is readable on {list(owners)}"
+                    for reference in unknown
+                    if (
+                        owners := grounding.reviewed_vocabulary.member_owners(reference)
+                    )
                 )
+                raise InvalidInitializationDraft(
+                    f"Unscanned query references: {unknown}"
+                    + (f". {hints}" if hints else "")
+                )
+            proposal.query_references = list(dict.fromkeys(canonical.values()))
             if (
                 needed.proposed_uid in existing
                 and existing[needed.proposed_uid] != needed
@@ -365,14 +475,23 @@ class Initialization:
                 raise InvalidInitializationDraft(
                     f"Conflicting relation request: {needed.proposed_uid}"
                 )
+            for role in needed.roles:
+                role.symbol_type = self._resolved_role_type(needed, role.symbol_type)
             request = needed.request()
+            accepted = accepted_role_types(
+                grounding.reviewed_vocabulary, proposal.query_references
+            )
             for role in request.roles:
-                try:
-                    resolve_symbol_type(role.symbol_type)
-                except (ImportError, AttributeError, TypeError, ValueError) as error:
+                native_type = resolve_symbol_type(role.symbol_type)
+                if accepted and not any(
+                    compatible_types(native_type, expected) for expected in accepted
+                ):
                     raise InvalidInitializationDraft(
-                        f"Invalid role type: {role.symbol_type.python_type_ref}"
-                    ) from error
+                        f"Role '{role.name}' of {needed.proposed_uid} has type "
+                        f"{role.symbol_type.python_type_ref}, which none of the cited "
+                        "queries accepts. Their parameters and owners take: "
+                        + ", ".join(sorted({str(expected) for expected in accepted}))
+                    )
             if len({role.name for role in request.roles}) != len(request.roles):
                 raise InvalidInitializationDraft(
                     f"Duplicate roles in {needed.proposed_uid}"
@@ -383,6 +502,32 @@ class Initialization:
                 raise InvalidInitializationDraft(
                     f"Duplicate parameters in {needed.proposed_uid}"
                 )
+
+    def _resolved_role_type(self, needed: GroundingRequest, reference: str) -> str:
+        """
+        The role type reference, with a wrong module path replaced by the one class
+        of that name the platform defines; rejects unresolvable or undenotable types.
+        """
+        try:
+            native_type = resolve_symbol_type(SymbolType(reference))
+        except (ImportError, AttributeError, TypeError, ValueError) as error:
+            matches = matching_symbol_types(reference)
+            if len(matches) != 1:
+                raise InvalidInitializationDraft(
+                    f"Invalid role type: {reference}. Matching class definitions: "
+                    f"{matches}. Choose the type matching the query input; do not "
+                    "substitute an unrelated class."
+                ) from error
+            (reference,) = matches
+            native_type = resolve_symbol_type(SymbolType(reference))
+        if not denotable(native_type):
+            raise InvalidInitializationDraft(
+                f"Role type {reference} in {needed.proposed_uid} cannot be denoted "
+                "by a task object; objects denote bodies and semantic annotations. "
+                "Pass such values as parameters or read them from an object's "
+                "attributes."
+            )
+        return reference
 
     def _import_relations(
         self,
@@ -459,6 +604,17 @@ class Initialization:
             )
             prompt += "\n\nComplete parameter constraints:\n" + needed.model_dump_json(
                 indent=2
+            )
+            references = {
+                reference
+                for record in self._relation_records().values()
+                for proposal in record.response.relations
+                if proposal.request.proposed_uid == needed.proposed_uid
+                for reference in proposal.query_references
+            }
+            prompt += (
+                "\n\nCited query implementations:\n"
+                + grounding.reviewed_vocabulary.render_details(references)
             )
             jobs.append(
                 _job(
@@ -560,12 +716,21 @@ class Initialization:
                     self._import_relations(job, response, author, report)
                     continue
                 candidate, workspace = self._candidate(job, response, author)
+                if job.kind is InitializationKind.GROUNDING:
+                    notes = workspace.review_notes(candidate)
+                    if notes:
+                        report.review_notes[candidate.candidate_id] = list(notes)
+                        candidate = replace(
+                            candidate, evidence=candidate.evidence + notes
+                        )
                 existing = {item.candidate_id for item in workspace.candidates()}
                 if candidate.candidate_id in existing:
                     report.existing.append(candidate.candidate_id)
                 else:
                     workspace.submit(candidate)
                     report.submitted.append(candidate.candidate_id)
+            except UnsupportedGroundingError as error:
+                report.unsupported[job.job_id] = str(error)
             except ValueError as error:
                 report.failed[job.job_id] = str(error)
         _write_json(self.materials / InitializationFile.REPORT, to_json(report))
@@ -672,15 +837,26 @@ class Initialization:
         return candidate, CoraplexRealizationWorkspace(self.realization_root)
 
     def draft(
-        self, completer: StructuredCompleter, maximum_attempts: int = 3
+        self, completer: StructuredCompleter, maximum_attempts: int | None = None
     ) -> ImportReport:
         """Draft relations and their factory follow-ups through the shared import path."""
-        report = self._draft_once(completer, maximum_attempts)
+        if maximum_attempts is None:
+            maximum_attempts = completer.maximum_attempts
+        attempted: set[str] = set()
+        report = self._draft_once(completer, maximum_attempts, attempted)
         while report.prepared:
-            follow_up = self._draft_once(completer, maximum_attempts)
+            follow_up = self._draft_once(completer, maximum_attempts, attempted)
+            follow_up.failed.update(report.failed)
+            follow_up.unsupported.update(report.unsupported)
+            follow_up.review_notes.update(report.review_notes)
             follow_up.submitted = list(
                 dict.fromkeys(report.submitted + follow_up.submitted)
             )
+            follow_up.existing = [
+                item
+                for item in dict.fromkeys(report.existing + follow_up.existing)
+                if item not in follow_up.submitted
+            ]
             follow_up.proposed = list(
                 dict.fromkeys(report.proposed + follow_up.proposed)
             )
@@ -689,22 +865,41 @@ class Initialization:
         return report
 
     def _draft_once(
-        self, completer: StructuredCompleter, maximum_attempts: int
+        self,
+        completer: StructuredCompleter,
+        maximum_attempts: int,
+        attempted: set[str],
     ) -> ImportReport:
         """Draft unanswered jobs, feed back validation errors, then use common import."""
         failures = {}
+        imported = ImportReport()
         api_path = self.materials / InitializationFile.API_RESPONSES
         api_responses = json.loads(api_path.read_text()) if api_path.exists() else {}
         for job in self.jobs():
-            if self.response_path(job).exists():
+            if self.response_path(job).exists() or job.job_id in attempted:
                 continue
+            attempted.add(job.job_id)
+            job_completer = replace(completer, maximum_attempts=1)
             prompt = job.prompt
+            if job.kind is InitializationKind.RELATIONS:
+                requests = (self.materials / InitializationFile.REQUESTS).read_text()
+                prompt += (
+                    "\n\nExisting relation requests (reuse exact definitions):\n"
+                    + requests
+                )
+                prompt += "\n\nApproved factories:\n" + "\n".join(
+                    f"{item.uid}: {item.semantic_name}"
+                    for item in self.grounding().catalog
+                )
+            initial_prompt = prompt
+            output_token_limit = None
             for _ in range(maximum_attempts):
                 try:
-                    response = completer.complete(
+                    response = job_completer.complete(
                         f"initialization-{job.kind.value}",
                         prompt,
                         _response_type(job.kind),
+                        output_token_limit=output_token_limit,
                     )
                     if job.kind is InitializationKind.RELATIONS:
                         self._validate_relations(job, response)
@@ -717,14 +912,42 @@ class Initialization:
                         response.model_dump_json()
                     )
                     _write_json(api_path, api_responses)
+                    if job.kind is InitializationKind.RELATIONS:
+                        self._import_relations(
+                            job, response, "initialization-api", imported
+                        )
                     break
-                except (ValueError, StructuredOutputRetriesExceededError) as error:
+                except UnsupportedGroundingError:
+                    self.response_path(job).write_text(
+                        response.model_dump_json(indent=2), encoding="utf-8"
+                    )
+                    break
+                except TruncatedOutputError as error:
                     failures[job.job_id] = str(error)
-                    prompt = f"{job.prompt}\n\nValidation objections:\n{error}\nCorrect the response."
+                    if output_token_limit is not None:
+                        break
+                    output_token_limit = error.output_token_limit * 2
+                except (ValueError, StructuredOutputRetriesExceededError) as error:
+                    objection = (
+                        error.last_error
+                        if isinstance(error, StructuredOutputRetriesExceededError)
+                        else str(error)
+                    )
+                    failures[job.job_id] = (
+                        f"No valid reply in {maximum_attempts} attempts; "
+                        f"last objection: {objection}"
+                    )
+                    prompt = (
+                        f"{initial_prompt}\n\nValidation objections:\n{objection}\n"
+                        "Correct the response."
+                    )
             else:
                 continue
-            failures.pop(job.job_id, None)
+            if self.response_path(job).exists():
+                failures.pop(job.job_id, None)
         report = self.import_responses()
+        report.proposed.extend(imported.proposed)
+        report.prepared.extend(imported.prepared)
         report.failed.update(failures)
         _write_json(self.materials / InitializationFile.REPORT, to_json(report))
         return report
@@ -840,10 +1063,14 @@ def main() -> None:
         report = initialization.import_responses(args.responses, args.generated_by)
     print(json.dumps(to_json(report), indent=2))
     print(
-        f"Pending candidates are ready for Viewer review. Workspaces: {initialization.root}"
+        f"Review workspace: {initialization.root}; submitted={len(report.submitted)}, "
+        f"invalid={len(report.failed)}, unsupported={len(report.unsupported)}, "
+        f"missing={len(report.missing)}"
     )
     if report.failed:
         raise SystemExit(1)
+    if report.unsupported:
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

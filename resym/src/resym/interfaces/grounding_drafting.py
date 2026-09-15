@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+from typing_extensions import Self
 
 from resym.core.grounding_model import (
     GroundingFactoryCandidate,
@@ -89,8 +90,22 @@ class GroundingFactoryDraftModel(BaseModel):
     Structured draft the model must answer with.
     """
 
-    source_code: str = Field(min_length=1)
+    source_code: str = ""
+    """Candidate implementation; empty when required query support is absent."""
     rationale: str = Field(min_length=1)
+    unsupported_reason: str = ""
+    """Missing observation or query support preventing a faithful implementation."""
+
+    @model_validator(mode="after")
+    def validate_outcome(self) -> Self:
+        """Require either an implementation or an explanation of missing support."""
+        if bool(self.source_code.strip()) == bool(self.unsupported_reason.strip()):
+            raise ValueError("Supply source_code or unsupported_reason, exclusively")
+        return self
+
+
+class UnsupportedGroundingError(ValueError):
+    """A relation lacks the observations or query support needed to implement it."""
 
 
 def draft_grounding_factory_candidates(
@@ -118,6 +133,13 @@ def draft_grounding_factory_candidates(
                 grounding_factory_prompt(request, vocabulary, objections),
                 GroundingFactoryDraftModel,
             )
+            if draft.unsupported_reason:
+                failures.append(
+                    GroundingFactoryDraftFailure(
+                        request.proposed_uid, (draft.unsupported_reason,)
+                    )
+                )
+                break
             candidate = grounding_factory_candidate(request, draft)
             objections = validator.candidate_objections(candidate)
             if not objections:
@@ -140,6 +162,8 @@ def grounding_factory_candidate(
     request: GroundingFactoryRequest, draft: GroundingFactoryDraftModel
 ) -> GroundingFactoryCandidate:
     """Build a pending factory from a declared relation and an author's reply."""
+    if draft.unsupported_reason:
+        raise UnsupportedGroundingError(draft.unsupported_reason)
     return GroundingFactoryCandidate(
         candidate_id=(
             f"draft-{request.semantic_name}-{text_checksum(draft.source_code)[:12]}"
@@ -152,6 +176,7 @@ def grounding_factory_candidate(
         generated_by=DRAFTING_AGENT_NAME,
         rationale=draft.rationale,
         source_kind=GroundingFactorySourceKind.AGENT_DRAFT,
+        native_arguments=True,
     )
 
 
@@ -178,6 +203,13 @@ def grounding_factory_prompt(
         meaning=request.meaning,
         roles=roles,
         parameters=parameters,
-        vocabulary=vocabulary.render() or "- none reviewed",
+        vocabulary=(
+            vocabulary.render()
+            + "\nReadable role attributes:\n"
+            + vocabulary.render_attributes(
+                role.symbol_type.python_type_ref for role in request.roles
+            )
+        )
+        or "- none reviewed",
         objections="\n".join(f"- {item}" for item in objections) or "- none",
     )

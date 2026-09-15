@@ -107,6 +107,11 @@ def evaluate_predicate(
         specification.roles, plan.role_bindings, arguments
     )
     try:
+        if specification.native_arguments:
+            factory_arguments = tuple(
+                argument.native_entity(role.symbol_type)
+                for argument, role in zip(factory_arguments, specification.roles)
+            )
         value = procedure(
             context,
             universe,

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from resym.core.grounding_model import GroundingFactoryParameter, GroundingFactoryRole
 from resym.core.symbol_types import SymbolType
@@ -69,6 +70,15 @@ class GroundingRelationProposal(BaseModel):
     """Qualified names from the scanned query vocabulary."""
     rationale: str = Field(min_length=1)
     """How the cited interfaces support the relation."""
+
+    @field_validator("query_references")
+    @classmethod
+    def keep_qualified_names(cls, references: list[str]) -> list[str]:
+        """Drop a signature, return type or kind copied from the rendered menu."""
+        return [
+            re.split(r"\(| ->|:", reference, maxsplit=1)[0].strip()
+            for reference in references
+        ]
 
 
 class GroundingRelationsDraft(BaseModel):

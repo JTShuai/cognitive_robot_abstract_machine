@@ -59,6 +59,10 @@ class LanguageModelExchange:
     input_tokens: int = 0
     output_tokens: int = 0
     usage_source: UsageSource = UsageSource.UNREPORTED
+    output_token_limit: int | None = None
+    """Configured output allowance for this call, if available."""
+    output_limit_reached: bool = False
+    """Usage-based indication, not a provider-reported finish reason."""
 
 
 @dataclass
@@ -119,6 +123,8 @@ class TranscriptRecorder:
             "input_tokens": exchange.input_tokens,
             "output_tokens": exchange.output_tokens,
             "usage_source": exchange.usage_source,
+            "output_token_limit": exchange.output_token_limit,
+            "output_limit_reached": exchange.output_limit_reached,
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a") as stream:

@@ -45,6 +45,21 @@ class CompletionUsage:
 class CompletionResult:
     text: str
     usage: CompletionUsage
+    output_token_limit: int | None = None
+    """
+    Configured output allowance, when reported by the adapter.
+    """
+
+    @property
+    def output_limit_reached(self) -> bool:
+        """
+        Whether measured usage reached the configured output allowance.
+        """
+        return (
+            self.output_token_limit is not None
+            and self.usage.source is UsageSource.PROVIDER
+            and self.usage.output_tokens >= self.output_token_limit
+        )
 
 
 class TransientInfrastructureError(RuntimeError):
@@ -80,6 +95,16 @@ class CompletionClient(ABC):
                 source=UsageSource.ESTIMATED,
             ),
         )
+
+    def complete_with_output_limit(
+        self, prompt: str, output_token_limit: int | None
+    ) -> CompletionResult:
+        """
+        Complete with an optional per-call output allowance.
+        """
+        if output_token_limit is not None:
+            raise ValueError("This completion backend cannot override output limits")
+        return self.complete_with_usage(prompt)
 
     @property
     @abstractmethod

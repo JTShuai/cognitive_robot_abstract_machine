@@ -522,17 +522,6 @@ def create_app(
         selected_label = str(request.args.get("label") or "")
         if selected_label not in label_counts:
             selected_label = ""
-        if len(label_counts) > 1:
-            rows.append(
-                "<div class='card facets'>"
-                + _facet_chips(
-                    "run type",
-                    sorted(label_counts.items(), key=lambda kv: -kv[1]),
-                    "label",
-                    {"label": selected_label},
-                )
-                + "</div>"
-            )
         for run, meta in metas:
             if selected_label and str(meta.get("label") or "?") != selected_label:
                 continue

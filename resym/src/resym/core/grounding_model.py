@@ -222,6 +222,11 @@ class GroundingFactoryCandidate:
     Reviewer explanation after a decision.
     """
 
+    native_arguments: bool = False
+    """
+    Whether the implementation receives CRAM entities instead of object references.
+    """
+
     def __post_init__(self) -> None:
         object.__setattr__(self, "roles", tuple(self.roles))
         object.__setattr__(self, "evidence", tuple(self.evidence))
@@ -301,6 +306,11 @@ class GroundingFactorySpec:
     """
     Imported reviewed vocabulary symbols and the source checksums approved with this
     implementation.
+    """
+
+    native_arguments: bool = False
+    """
+    Whether runtime converts object references to their typed CRAM entities.
     """
 
     def __post_init__(self) -> None:
