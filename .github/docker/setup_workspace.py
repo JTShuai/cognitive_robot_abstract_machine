@@ -358,6 +358,26 @@ def main():
                 ),
             ],
         ),
+        Repository(
+            "https://github.com/xArm-Developer/xarm_ros2.git",
+            "jazzy",
+            "xarm_ros2",
+            # Only xarm_description is needed, for the xArm 5's URDF and meshes; the
+            # rest of the repository is drivers, MoveIt configs and Gazebo support.
+            [
+                "demo",
+                "thirdparty",
+                "uf_ros_lib",
+                "xarm_api",
+                "xarm_controller",
+                "xarm_gazebo",
+                "xarm_moveit_config",
+                "xarm_moveit_servo",
+                "xarm_msgs",
+                "xarm_planner",
+                "xarm_sdk",
+            ],
+        ),
     ]
 
     for repo in repos:

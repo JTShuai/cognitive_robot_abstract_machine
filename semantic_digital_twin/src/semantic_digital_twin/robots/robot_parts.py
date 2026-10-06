@@ -8,6 +8,7 @@ from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import (
+    Dict,
     Optional,
     Self,
     TYPE_CHECKING,
@@ -830,6 +831,15 @@ class AbstractRobot(Agent, HasRobotParts, ABC):
         Returns a ROS file path pointing to the description of this robot, for example a
         URDF file.
         """
+
+    @classmethod
+    def get_xacro_mappings(cls) -> Dict[str, str]:
+        """
+        Returns the xacro substitution arguments :meth:`get_ros_file_path` must be
+        expanded with. Empty unless a robot overrides it, which a robot whose
+        description is a parameterized xacro does to select its model.
+        """
+        return {}
 
     @classmethod
     @abstractmethod

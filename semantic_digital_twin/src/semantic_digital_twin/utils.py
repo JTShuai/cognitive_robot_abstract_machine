@@ -35,6 +35,7 @@ def create_cache_dir(folder_name: str) -> Path:
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
 
+
 class suppress_stdout_stderr(object):
     """
     A context manager for doing a "deep suppression" of stdout and stderr in
@@ -124,6 +125,19 @@ def tracy_installed() -> bool:
             return True
         return False
     except (ImportError, PackageNotFoundError, ValueError):
+        return False
+
+
+def xarm5_installed() -> bool:
+    try:
+        from ament_index_python import PackageNotFoundError
+        from ament_index_python.packages import get_package_share_directory
+    except ImportError:
+        return False
+
+    try:
+        return bool(get_package_share_directory("xarm_description"))
+    except (PackageNotFoundError, ValueError):
         return False
 
 
