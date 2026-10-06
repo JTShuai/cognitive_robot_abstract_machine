@@ -18,6 +18,7 @@ from semantic_digital_twin.robots.stretch import Stretch, StretchJoint
 from semantic_digital_twin.robots.tiago import Tiago, TiagoJoint
 from semantic_digital_twin.robots.tracy import Tracy, TracyJoint
 from semantic_digital_twin.robots.unitree_g1 import UnitreeG1, UnitreeG1Joint
+from semantic_digital_twin.robots.xarm5 import XArm5, XArm5Joint
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import ActiveConnection
 
@@ -35,6 +36,7 @@ ROBOTS_WITH_JOINT_ENUM: list[tuple[type[AbstractRobot], type[StrEnum]]] = [
     (Justin, JustinJoint),
     (UnitreeG1, UnitreeG1Joint),
     (MMPDresden, MMPDresdenJoint),
+    (XArm5, XArm5Joint),
 ]
 """
 Every robot whose description can be resolved, together with the enum naming its joints.
@@ -56,7 +58,9 @@ def parse_robot_description(robot_type: type[AbstractRobot]) -> World:
 
     :param robot_type: The robot whose description is parsed
     """
-    return URDFParser.from_file(robot_type.get_ros_file_path()).parse()
+    return URDFParser.from_file(
+        robot_type.get_ros_file_path(), mappings=robot_type.get_xacro_mappings()
+    ).parse()
 
 
 # %% joint-name enums against the parsed description
