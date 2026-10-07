@@ -1,25 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   Self-collision matrix for the UFACTORY xArm 5.
-
-  The <disable_collisions> matrix below is generated, not hand-written, and is the
-  only part SelfCollisionMatrixRule.from_collision_srdf consumes. Regenerate it
-  whenever the collision geometry changes - which a different hardware variant does,
-  since the model number the serial number encodes selects a different mesh set for
-  every link:
-
-      rule = SelfCollisionMatrixRule()
-      rule.compute_self_collision_matrix(robot=robot)
-      rule.save_self_collision_matrix(robot_name="UF_ROBOT", file_name="xarm5.srdf")
-
-  The generator seeds its sampling, so it is reproducible. It was run against the
-  world XArm5.get_xacro_mappings() expands, i.e. the 1305 variant. The pre-1300
-  variant yields one pair more, link2/link5, because it uses the visual meshes as
-  collision geometry; disabling that pair on a 1305 arm would let link5 pass through
-  link2 unchecked.
-
-  The <group> and <group_state> entries are not read by CRAM. They are kept so this
-  stays a valid, MoveIt-usable SRDF.
 -->
 <robot name="UF_ROBOT">
   <!-- The planning group: the 5 revolute joints of the arm. -->
